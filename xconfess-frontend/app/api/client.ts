@@ -1,4 +1,3 @@
-// Define and export the data structure
 export interface TemplateRollout {
   key: string;
   activeVersion: string;
@@ -8,26 +7,42 @@ export interface TemplateRollout {
   lastValidationFailure?: string;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
-
-async function fetchApi<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
-  
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}));
-    throw new Error(errorBody.message || `API Error: ${response.status}`);
+const getApiBaseUrl = () => {
+  const url = process.env.NEXT_PUBLIC_API_URL;
+  if (!url && process.env.NODE_ENV === 'production') {
+    throw new Error("CRITICAL: NEXT_PUBLIC_API_URL is not defined in production.");
   }
+  return url || 'http://localhost:8000/api';
+};
 
-  if (response.status === 204) return {} as T;
-  return response.json();
+const API_BASE_URL = getApiBaseUrl();
+
+async function fetchApi<T>(endpoint: string, options: RequestInit = {}, timeoutMs = 15000): Promise<T | null> {
+  const url = `${API_BASE_URL}${endpoint}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+
+    if (response.status === 204) return null;
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => ({}));
+      throw new Error(errorBody.message || `API Error: ${response.status}`);
+    }
+
+    return response.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export const rolloutApi = {
