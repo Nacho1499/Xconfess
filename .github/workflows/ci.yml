@@ -20,8 +20,65 @@ env:
   CI: true
 
 jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      contracts: ${{ steps.filter.outputs.contracts }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect scoped changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'xconfess-backend/**'
+              - '!xconfess-backend/**/*.md'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.gitattributes'
+              - '.github/actions/**'
+              - '.github/workflows/ci.yml'
+              - 'scripts/**'
+            frontend:
+              - 'xconfess-frontend/**'
+              - '!xconfess-frontend/**/*.md'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.gitattributes'
+              - '.github/actions/**'
+              - '.github/workflows/ci.yml'
+              - 'scripts/**'
+            contracts:
+              - 'xconfess-contracts/**'
+              - '!xconfess-contracts/**/*.md'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.gitattributes'
+              - '.github/actions/**'
+              - '.github/workflows/ci.yml'
+              - 'scripts/**'
+
+  no-relevant-changes:
+    name: No scoped changes
+    needs: changes
+    if: needs.changes.outputs.backend != 'true' && needs.changes.outputs.frontend != 'true' && needs.changes.outputs.contracts != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip unrelated changes
+        run: echo "No backend, frontend, or contracts code/config changes detected. Scoped CI jobs were skipped."
+
   backend-build-lint:
     name: Backend build + lint
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -46,6 +103,8 @@ jobs:
 
   backend-tests:
     name: Backend tests (advisory)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
@@ -77,6 +136,8 @@ jobs:
 
   frontend-build-lint:
     name: Frontend build + lint
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -110,6 +171,8 @@ jobs:
 
   frontend-tests:
     name: Frontend tests (advisory)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
@@ -141,6 +204,8 @@ jobs:
 
   contracts-build:
     name: Contracts build
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -163,6 +228,8 @@ jobs:
 
   contracts-quality:
     name: Contracts checks (advisory)
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     continue-on-error: true
