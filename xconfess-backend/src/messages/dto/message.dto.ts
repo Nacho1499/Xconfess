@@ -29,12 +29,4 @@ export class ReplyMessageDto {
   reply: string;
 }
 
-export class GetMessagesQueryDto {
-  @ApiProperty({ description: 'UUID of the confession thread' })
-  @IsUUID()
-  confession_id: string;
 
-  @ApiProperty({ description: 'UUID of the sender anonymous user' })
-  @IsUUID()
-  sender_id: string;
-}
