@@ -7,7 +7,7 @@ import {
   NotificationType,
 } from '../entities/notification.entity';
 import { NotificationPreference } from '../entities/notification-preference.entity';
-import { NOTIFICATION_QUEUE } from '../notification.queue';
+import { NOTIFICATION_QUEUE } from '../processors/notification.processor';
 import {
   CreateNotificationDto,
   NotificationQueryDto,
@@ -24,6 +24,21 @@ export class NotificationService {
     @InjectQueue(NOTIFICATION_QUEUE)
     private notificationQueue: Queue,
   ) {}
+
+  async enqueueNotification(
+    type: string,
+    payload: any,
+    jobId?: string,
+  ): Promise<void> {
+    await this.notificationQueue.add(
+      'send-notification',
+      {
+        ...payload,
+        type,
+      },
+      { jobId },
+    );
+  }
 
   async createNotification(
     dto: CreateNotificationDto,
@@ -48,10 +63,14 @@ export class NotificationService {
       preference.enableEmailNotifications &&
       this.shouldSendEmail(preference, dto.type)
     ) {
-      await this.notificationQueue.add('send-email', {
-        notificationId: notification.id,
-        userId: dto.userId,
-      });
+      await this.notificationQueue.add(
+        'send-notification',
+        {
+          notificationId: notification.id,
+          userId: dto.userId,
+        },
+        { jobId: `email-${notification.id}` },
+      );
     }
 
     return notification;

@@ -5,10 +5,7 @@ import { Reaction } from '../reaction/entities/reaction.entity';
 import { User } from '../user/entities/user.entity';
 import { AnonymousConfession } from '../confession/entities/confession.entity';
 import { CacheService } from '../cache/cache.service';
-import {
-  toWindowBoundaries,
-  TrendingWindow,
-} from '../types/analytics.types';
+import { toWindowBoundaries, TrendingWindow } from '../types/analytics.types';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -169,6 +166,125 @@ describe('AnalyticsService', () => {
       });
     });
   });
+
+  describe('comparison endpoints', () => {
+    it('builds growth comparison responses with explicit current and previous windows', async () => {
+      const helper = jest
+        .spyOn<any, any>(service as any, 'getGrowthMetricsForWindow')
+        .mockResolvedValueOnce({
+          period: '7 days',
+          totalConfessions: 42,
+          averagePerDay: 6,
+          dailyGrowth: [{ date: '2026-03-20', count: 5 }],
+          trend: 'increasing',
+        })
+        .mockResolvedValueOnce({
+          period: '7 days',
+          totalConfessions: 21,
+          averagePerDay: 3,
+          dailyGrowth: [{ date: '2026-03-12', count: 3 }],
+          trend: 'stable',
+        });
+
+      const result = await service.getConfessionGrowthComparison(7);
+
+      expect(helper).toHaveBeenCalledTimes(2);
+      expect(result.window).toEqual(
+        expect.objectContaining({
+          requestedDays: 7,
+          bucketUnit: 'day',
+          bucketCount: expect.any(Number),
+          current: expect.objectContaining({
+            startAt: expect.any(String),
+            endAt: expect.any(String),
+          }),
+          previous: expect.objectContaining({
+            startAt: expect.any(String),
+            endAt: expect.any(String),
+          }),
+        }),
+      );
+      expect(result.delta).toEqual({
+        totalConfessions: { absoluteChange: 21, percentageChange: 100 },
+        averagePerDay: { absoluteChange: 3, percentageChange: 100 },
+      });
+    });
+
+    it('builds user activity comparisons from the shared activity helper', async () => {
+      jest
+        .spyOn<any, any>(service as any, 'getUserActivityForWindow')
+        .mockResolvedValueOnce({
+          period: '30 days',
+          dailyActivity: [{ date: '2026-02-26', activeUsers: 10 }],
+          averageDAU: 10,
+        })
+        .mockResolvedValueOnce({
+          period: '30 days',
+          dailyActivity: [{ date: '2026-01-26', activeUsers: 8 }],
+          averageDAU: 8,
+        });
+
+      const result = await service.getUserActivityComparison(30);
+
+      expect(result.current.averageDAU).toBe(10);
+      expect(result.previous.averageDAU).toBe(8);
+      expect(result.delta.averageDAU).toEqual({
+        absoluteChange: 2,
+        percentageChange: 25,
+      });
+    });
+
+    it('builds reaction comparison deltas per type', async () => {
+      jest
+        .spyOn<any, any>(service as any, 'getReactionDistributionForWindow')
+        .mockResolvedValueOnce({
+          total: 12,
+          period: '7 days',
+          distribution: [
+            { type: 'like', count: 8, percentage: '66.67' },
+            { type: 'support', count: 4, percentage: '33.33' },
+          ],
+        })
+        .mockResolvedValueOnce({
+          total: 9,
+          period: '7 days',
+          distribution: [
+            { type: 'like', count: 3, percentage: '33.33' },
+            { type: 'wow', count: 6, percentage: '66.67' },
+          ],
+        });
+
+      const result = await service.getReactionDistributionComparison(7);
+
+      expect(result.delta.total).toEqual({
+        absoluteChange: 3,
+        percentageChange: 33.33,
+      });
+      expect(result.delta.byType).toEqual([
+        {
+          type: 'like',
+          currentCount: 8,
+          previousCount: 3,
+          absoluteChange: 5,
+          percentageChange: 166.67,
+        },
+        {
+          type: 'support',
+          currentCount: 4,
+          previousCount: 0,
+          absoluteChange: 4,
+          percentageChange: null,
+        },
+        {
+          type: 'wow',
+          currentCount: 0,
+          previousCount: 6,
+          absoluteChange: -6,
+          percentageChange: -100,
+        },
+      ]);
+    });
+  });
 });
 
 // ─── toWindowBoundaries unit tests ────────────────────────────────────────────
@@ -299,6 +415,8 @@ describe('toWindowBoundaries()', () => {
     // endAt should be UTC midnight of tomorrow, so it must be in the future
     expect(endAt.getTime()).toBeGreaterThan(before);
     // and no more than 2 days out from `after`
-    expect(endAt.getTime()).toBeLessThanOrEqual(after + 2 * 24 * 60 * 60 * 1000);
+    expect(endAt.getTime()).toBeLessThanOrEqual(
+      after + 2 * 24 * 60 * 60 * 1000,
+    );
   });
 });

@@ -15,11 +15,15 @@
     "incremental": true,
     "skipLibCheck": true,
     "strictNullChecks": true,
+    "strictPropertyInitialization": false,
+    "useUnknownInCatchVariables": false,
     "forceConsistentCasingInFileNames": true,
     "noImplicitAny": false,
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false,
+    "noEmitOnError": false,
     "moduleResolution": "node",
+    "ignoreDeprecations": "5.0",
     "types": [
       "jest",
       "node"

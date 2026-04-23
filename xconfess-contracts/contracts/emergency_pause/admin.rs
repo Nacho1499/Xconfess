@@ -1,7 +1,7 @@
-use soroban_sdk::{Env, Address};
+use soroban_sdk::{Address, Env};
 
-use crate::emergency_pause::storage::DataKey;
 use crate::emergency_pause::errors::PauseError;
+use crate::emergency_pause::storage::DataKey;
 
 pub fn set_admin(env: &Env, admin: Address) {
     admin.require_auth();
@@ -17,7 +17,8 @@ pub fn get_admin(env: &Env) -> Address {
 }
 
 pub fn require_admin(env: &Env) -> Result<Address, PauseError> {
-    let admin: Address = env.storage()
+    let admin: Address = env
+        .storage()
         .instance()
         .get(&DataKey::Admin)
         .ok_or(PauseError::Unauthorized)?;

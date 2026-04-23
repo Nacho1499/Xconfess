@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import axios from 'axios';
+import { getApiBaseUrl } from '@/app/lib/config';
+import { createApiErrorResponse } from "@/lib/apiErrorHandler";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+const BACKEND_URL = getApiBaseUrl();
 
 type ComparisonAvailability = 'available' | 'estimated' | 'unavailable';
 type DeltaDirection = 'up' | 'down' | 'flat' | 'unknown';
@@ -219,8 +221,8 @@ export async function GET(request: Request) {
     compareMode === 'true' || compareMode === '1' || compareMode === 'previous';
   const days = period === '30d' ? 30 : 7;
 
-  // Get token from cookie or header if needed, but for now let's hope the backend is accessible 
-  // or use a service account token if internal. 
+  // Get token from cookie or header if needed, but for now let's hope the backend is accessible
+  // or use a service account token if internal.
   // In Next.js App Router, we usually pass through the auth header from the client request.
   const authHeader = request.headers.get('authorization');
 
@@ -469,10 +471,10 @@ export async function GET(request: Request) {
 
     return NextResponse.json(payload);
   } catch (error: any) {
-    console.error('Analytics Fetch Error:', error?.response?.data || error.message);
-    return NextResponse.json(
-      { error: 'Failed to fetch real-time analytics' },
-      { status: error?.response?.status || 500 }
-    );
+    return createApiErrorResponse(error, {
+      status: error?.response?.status || 500,
+      fallbackMessage: "Failed to fetch real-time analytics",
+      route: "GET /api/analytics"
+    });
   }
 }

@@ -1,3 +1,4 @@
+// src/stellar/stellar-config.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as StellarSDK from '@stellar/stellar-sdk';
@@ -9,7 +10,11 @@ import {
 @Injectable()
 export class StellarConfigService {
   private readonly logger = new Logger(StellarConfigService.name);
-  private config: IStellarConfig;
+  private config: IStellarConfig & {
+    maxFeeBudget: number;
+    feeBackoffMs: number;
+    maxFeeRetries: number;
+  };
   private server: StellarSDK.Horizon.Server;
 
   constructor(private configService: ConfigService) {
@@ -17,7 +22,7 @@ export class StellarConfigService {
   }
 
   private initializeConfig() {
-    // FIXED: Proper defaults and validation
+    // Validate network
     const network = this.configService.get<StellarNetwork>(
       'STELLAR_NETWORK',
       StellarNetwork.TESTNET,
@@ -25,6 +30,19 @@ export class StellarConfigService {
     if (!Object.values(StellarNetwork).includes(network)) {
       throw new Error(`Invalid network: ${network}`);
     }
+
+    // Load fee/backoff policy
+    const maxFeeBudget = Number(
+      this.configService.get('STELLAR_MAX_FEE_BUDGET') ?? 100,
+    );
+    const feeBackoffMs = Number(
+      this.configService.get('STELLAR_FEE_BACKOFF_MS') ?? 5000,
+    );
+    const maxFeeRetries = Number(
+      this.configService.get('STELLAR_MAX_FEE_RETRIES') ?? 3,
+    );
+
+    // Build config
     this.config = {
       network,
       horizonUrl: this.getHorizonUrl(network),
@@ -39,13 +57,22 @@ export class StellarConfigService {
         ),
         tippingSystem: this.configService.get('TIPPING_SYSTEM_CONTRACT_ID'),
       },
+      maxFeeBudget,
+      feeBackoffMs,
+      maxFeeRetries,
     };
+
+    // Initialize Horizon server
     this.server = new StellarSDK.Horizon.Server(this.config.horizonUrl);
+
     this.logger.log(`Stellar configured for ${network}`);
     this.logger.log(`Horizon URL: ${this.config.horizonUrl}`);
+    this.logger.log(
+      `Fee budget: ${maxFeeBudget}, Backoff: ${feeBackoffMs}ms, Max retries: ${maxFeeRetries}`,
+    );
   }
 
-  getConfig(): IStellarConfig {
+  getConfig() {
     return { ...this.config };
   }
 

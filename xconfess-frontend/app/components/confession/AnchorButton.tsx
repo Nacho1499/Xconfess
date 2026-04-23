@@ -8,9 +8,10 @@ import {
   CheckCircle2,
   ExternalLink,
   Anchor,
-  AlertCircle,
 } from "lucide-react";
 import { cn } from "@/app/lib/utils/cn";
+import { useActivityStore } from "@/app/lib/store/activity.store";
+import { v4 as uuidv4 } from "uuid";
 
 interface AnchorButtonProps {
   confessionId: string;
@@ -38,6 +39,10 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
     anchor,
     isLoading,
   } = useStellarWallet();
+
+  const addActivity = useActivityStore((s) => s.addActivity);
+  const updateActivity = useActivityStore((s) => s.updateActivity);
+
   const [isAnchoring, setIsAnchoring] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(stellarTxHash);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +63,7 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
     if (!isConnected) {
       try {
         await connect();
-      } catch (err) {
+      } catch {
         setError("Failed to connect wallet");
         return;
       }
@@ -66,11 +71,26 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
 
     setIsAnchoring(true);
 
+    // ✅ Create activity FIRST
+    const activityId = uuidv4();
+    addActivity({
+      id: activityId,
+      type: "anchor",
+      status: "submitted",
+      createdAt: Date.now(),
+      confessionId,
+    });
+
     try {
       const result = await anchor(confessionContent);
 
       if (result.success && result.txHash) {
-        // Call backend to store the anchor data
+        // update activity with txHash
+        updateActivity(activityId, {
+          txHash: result.txHash,
+        });
+
+        // save to backend
         const response = await fetch(
           `/api/confessions/${confessionId}/anchor`,
           {
@@ -81,32 +101,45 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
             body: JSON.stringify({
               stellarTxHash: result.txHash,
             }),
-          },
+          }
         );
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(
-            errorData.message || "Failed to save anchor data to server",
-          );
+          throw new Error("Failed to save anchor");
         }
+
+        // mark as confirmed
+        updateActivity(activityId, {
+          status: "confirmed",
+          updatedAt: Date.now(),
+        });
 
         setTxHash(result.txHash);
         setAnchored(true);
         onAnchorSuccess?.(result.txHash);
       } else {
+        updateActivity(activityId, {
+          status: "failed",
+          updatedAt: Date.now(),
+        });
+
         setError(result.error || "Failed to anchor confession");
       }
     } catch (err) {
-      const errorMessage =
+      updateActivity(activityId, {
+        status: "failed",
+        updatedAt: Date.now(),
+      });
+
+      const message =
         err instanceof Error ? err.message : "Failed to anchor confession";
-      setError(errorMessage);
+      setError(message);
     } finally {
       setIsAnchoring(false);
     }
   };
 
-  // Already anchored - show status
+  // ✅ Already anchored UI
   if (anchored && txHash) {
     return (
       <div className={cn("flex items-center gap-2", className)}>
@@ -117,7 +150,6 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
           target="_blank"
           rel="noopener noreferrer"
           className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
-          title="View on Stellar Explorer"
         >
           <ExternalLink className="h-3 w-3" />
         </a>
@@ -125,18 +157,11 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
     );
   }
 
-  // Wallet not available
+  // ❌ Wallet not available
   if (!isAvailable) {
     return (
-      <div
-        className={cn(
-          "flex items-center gap-1 text-xs text-zinc-500",
-          className,
-        )}
-        title="Install Freighter wallet to anchor confessions"
-      >
-        <Anchor className="h-3 w-3" />
-        <span>Wallet required</span>
+      <div className={cn("text-xs text-zinc-500", className)}>
+        Wallet required
       </div>
     );
   }
@@ -149,11 +174,6 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
         onClick={handleAnchor}
         disabled={isAnchoring || isLoading || (isConnected && !isReady)}
         className="h-7 px-2 text-xs"
-        title={
-          isConnected && !isReady
-            ? readinessError || "Wallet not ready"
-            : "Anchor this confession on Stellar blockchain"
-        }
       >
         {isAnchoring || isLoading ? (
           <>
@@ -167,23 +187,14 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
           </>
         )}
       </Button>
+
       {error && (
-        <div className="flex items-center gap-1 text-xs text-red-400">
-          <AlertCircle className="h-3 w-3" />
-          <span className="truncate max-w-[150px]" title={error}>
-            {error}
-          </span>
-        </div>
+        <div className="text-xs text-red-400">{error}</div>
       )}
+
       {isConnected && !isReady && !error && (
-        <div className="flex items-center gap-1 text-xs text-orange-400 mt-1">
-          <AlertCircle className="h-3 w-3" />
-          <span
-            className="truncate max-w-[200px]"
-            title={readinessError || "Wallet not ready"}
-          >
-            {readinessError}
-          </span>
+        <div className="text-xs text-orange-400">
+          {readinessError}
         </div>
       )}
     </div>

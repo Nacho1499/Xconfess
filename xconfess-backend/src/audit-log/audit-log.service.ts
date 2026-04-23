@@ -4,15 +4,26 @@ import { Repository } from 'typeorm';
 import { AuditLog, AuditActionType } from './audit-log.entity';
 
 export interface AuditLogContext {
-  userId?: string | null;
+  userId?: string | number | null;
   ipAddress?: string;
   userAgent?: string;
   requestId?: string;
+  actor?: AuditActor;
+}
+
+export type AuditActorType = 'admin' | 'user' | 'system' | 'webhook';
+
+export interface AuditActor {
+  type: AuditActorType;
+  id: string;
+  userId?: string | null;
+  label?: string;
+  source?: string | null;
 }
 
 export interface CreateAuditLogDto {
   actionType: AuditActionType;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   context?: AuditLogContext;
 }
 
@@ -33,8 +44,9 @@ export interface TemplateRolloutDiffRecord {
     | 'kill_switch_toggle'
     | 'fallback_activation';
   actorId: string;
-  before: Record<string, any>;
-  after: Record<string, any>;
+  actorType?: AuditActorType;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
   source?: TemplateRolloutSourceMetadata;
 }
 
@@ -44,7 +56,7 @@ export type ExportLifecycleAction =
   | 'link_refreshed'
   | 'downloaded';
 
-export type ExportActorType = 'user' | 'system';
+export type ExportActorType = AuditActorType;
 
 export interface ExportLifecycleAuditRecord {
   action: ExportLifecycleAction;
@@ -53,20 +65,64 @@ export interface ExportLifecycleAuditRecord {
   actorType: ExportActorType;
   actorId?: string | null;
   occurredAt?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   context?: AuditLogContext;
 }
 
 @Injectable()
 export class AuditLogService {
   private readonly logger = new Logger(AuditLogService.name);
-  private readonly uuidPattern =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
   constructor(
     @InjectRepository(AuditLog)
     private readonly auditLogRepository: Repository<AuditLog>,
   ) {}
+
+  private toNullableUserId(value?: string | number | null): number | null {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+
+    const normalized =
+      typeof value === 'number' ? value : Number.parseInt(value, 10);
+
+    if (!Number.isInteger(normalized)) {
+      return null;
+    }
+
+    return normalized;
+  }
+
+  private extractEntityId(metadata?: Record<string, any>): string | null {
+    if (!metadata) {
+      return null;
+    }
+
+    const candidates = [
+      metadata.entityId,
+      metadata.reportId,
+      metadata.commentId,
+      metadata.confessionId,
+      metadata.exportId,
+      metadata.requestId,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.length > 0) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  private extractMetadataString(
+    metadata: Record<string, unknown> | undefined,
+    key: string,
+  ): string | null {
+    const value = metadata?.[key];
+    return typeof value === 'string' && value.length > 0 ? value : null;
+  }
 
   /**
    * Log a sensitive action to the audit log
@@ -74,21 +130,45 @@ export class AuditLogService {
    */
   async log(dto: CreateAuditLogDto): Promise<void> {
     try {
+      const actor = this.resolveActor(dto);
+      const templateKey = this.extractMetadataString(
+        dto.metadata,
+        'templateKey',
+      );
+      const templateVersion = this.extractMetadataString(
+        dto.metadata,
+        'templateVersion',
+      );
       const auditLog = this.auditLogRepository.create({
-        userId: dto.context?.userId || null,
-        actionType: dto.actionType,
+        adminId: this.toNullableUserId(dto.context?.userId || null),
+        action: dto.actionType,
+        entityType:
+          typeof dto.metadata?.entityType === 'string'
+            ? dto.metadata.entityType
+            : null,
+        entityId: this.extractEntityId(dto.metadata),
         metadata: {
           ...(dto.metadata || {}),
+          ...(actor
+            ? {
+                actorType: actor.type,
+                actorId: actor.id,
+                actorUserId: actor.userId || null,
+                ...(actor.label ? { actorLabel: actor.label } : {}),
+                ...(actor.source ? { actorSource: actor.source } : {}),
+              }
+            : {}),
           ...(dto.context?.requestId
             ? { requestId: dto.context.requestId }
             : {}),
-          ...(dto.metadata?.templateKey && dto.metadata?.templateVersion
+          ...(templateKey && templateVersion
             ? {
-                templateKey: dto.metadata.templateKey,
-                templateVersion: dto.metadata.templateVersion,
+                templateKey,
+                templateVersion,
               }
             : {}),
         },
+        notes: null,
         ipAddress: dto.context?.ipAddress || null,
         userAgent: dto.context?.userAgent || null,
       });
@@ -96,13 +176,13 @@ export class AuditLogService {
       await this.auditLogRepository.save(auditLog);
 
       this.logger.log(
-        `Audit log created: ${dto.actionType} by user ${dto.context?.userId || 'anonymous'}`,
+        `Audit log created: ${dto.actionType} by ${actor?.type || 'anonymous'} ${actor?.id || dto.context?.userId || 'anonymous'}`,
       );
-    } catch (error) {
+    } catch (error: unknown) {
       // Log the error but don't throw to prevent disrupting the main operation
       this.logger.error(
-        `Failed to create audit log for action ${dto.actionType}: ${error.message}`,
-        error.stack,
+        `Failed to create audit log for action ${dto.actionType}: ${error instanceof Error ? error.message : 'unknown error'}`,
+        error instanceof Error ? error.stack : undefined,
       );
     }
   }
@@ -217,7 +297,11 @@ export class AuditLogService {
         ...metadata,
         resolvedAt: new Date().toISOString(),
       },
-      context: { ...context, userId: adminId },
+      context: {
+        ...context,
+        userId: adminId,
+        actor: this.createActor('admin', adminId),
+      },
     });
   }
 
@@ -244,7 +328,11 @@ export class AuditLogService {
         ...metadata,
         dismissedAt: new Date().toISOString(),
       },
-      context: { ...context, userId: adminId },
+      context: {
+        ...context,
+        userId: adminId,
+        actor: this.createActor('admin', adminId),
+      },
     });
   }
 
@@ -275,7 +363,11 @@ export class AuditLogService {
         ...metadata,
         replayedAt: metadata.replayedAt || new Date().toISOString(),
       },
-      context: { ...context, userId: adminId },
+      context: {
+        ...context,
+        userId: adminId,
+        actor: this.createActor('admin', adminId),
+      },
     });
   }
 
@@ -299,6 +391,10 @@ export class AuditLogService {
   ): Promise<void> {
     const occurredAt = record.occurredAt || new Date().toISOString();
     const exportId = record.exportId || record.requestId;
+    const actorUserId =
+      record.actorType === 'user' || record.actorType === 'admin'
+        ? record.actorId || record.context?.userId || null
+        : null;
 
     await this.log({
       actionType: this.mapExportActionType(record.action),
@@ -315,20 +411,27 @@ export class AuditLogService {
       },
       context: {
         ...record.context,
-        userId: this.toNullableUuid(record.context?.userId || null),
+        userId: this.toNullableUserId(record.context?.userId ?? actorUserId),
+        actor: this.createActor(
+          record.actorType,
+          record.actorId || record.action,
+          {
+            userId: actorUserId,
+          },
+        ),
       },
     });
   }
 
   private buildRolloutDiff(
-    before: Record<string, any>,
-    after: Record<string, any>,
-  ): Record<string, { before: any; after: any }> {
+    before: Record<string, unknown>,
+    after: Record<string, unknown>,
+  ): Record<string, { before: unknown; after: unknown }> {
     const keys = new Set([
       ...Object.keys(before || {}),
       ...Object.keys(after || {}),
     ]);
-    const diff: Record<string, { before: any; after: any }> = {};
+    const diff: Record<string, { before: unknown; after: unknown }> = {};
 
     for (const key of keys) {
       const beforeValue = before?.[key];
@@ -344,19 +447,13 @@ export class AuditLogService {
     return diff;
   }
 
-  private toNullableUuid(value?: string | null): string | null {
-    if (!value || !this.uuidPattern.test(value)) {
-      return null;
-    }
-    return value;
-  }
-
   async logTemplateRolloutDiff(
     record: TemplateRolloutDiffRecord,
     context?: AuditLogContext,
   ): Promise<void> {
     const correlationId = record.source?.correlationId || context?.requestId;
     const diff = this.buildRolloutDiff(record.before, record.after);
+    const actorUserId = context?.userId ?? record.actorId;
 
     await this.log({
       actionType: AuditActionType.TEMPLATE_ROLLOUT_DIFF_RECORDED,
@@ -378,7 +475,14 @@ export class AuditLogService {
         diff,
         changedAt: new Date().toISOString(),
       },
-      context: { ...context, userId: this.toNullableUuid(record.actorId) },
+      context: {
+        ...context,
+        userId: this.toNullableUserId(actorUserId),
+        actor: this.createActor(record.actorType || 'admin', record.actorId, {
+          userId: actorUserId,
+          source: record.source?.sourceEndpoint || null,
+        }),
+      },
     });
   }
 
@@ -407,7 +511,11 @@ export class AuditLogService {
         entityId: `${templateKey}:${version}`,
         transitionedAt: new Date().toISOString(),
       },
-      context: { ...context, userId: adminId },
+      context: {
+        ...context,
+        userId: adminId,
+        actor: this.createActor('admin', adminId),
+      },
     });
 
     await this.logTemplateRolloutDiff(
@@ -416,6 +524,7 @@ export class AuditLogService {
         templateVersion: version,
         changeType: 'state_transition',
         actorId: adminId,
+        actorType: 'admin',
         before: { lifecycleState: from },
         after: { lifecycleState: to },
         source: {
@@ -450,7 +559,11 @@ export class AuditLogService {
         entityId: templateKey || 'global',
         toggledAt: new Date().toISOString(),
       },
-      context: { ...context, userId: adminId },
+      context: {
+        ...context,
+        userId: adminId,
+        actor: this.createActor('admin', adminId),
+      },
     });
 
     await this.logTemplateRolloutDiff(
@@ -458,6 +571,7 @@ export class AuditLogService {
         templateKey: templateKey || 'global',
         changeType: 'kill_switch_toggle',
         actorId: adminId,
+        actorType: 'admin',
         before: { killSwitchEnabled: !enabled },
         after: { killSwitchEnabled: enabled },
         source: {
@@ -501,7 +615,11 @@ export class AuditLogService {
         templateKey,
         templateVersion: failedVersion,
         changeType: 'fallback_activation',
-        actorId: context?.userId || 'system',
+        actorId: String(
+          context?.actor?.id || context?.userId || 'template-fallback',
+        ),
+        actorType:
+          context?.actor?.type || (context?.userId ? 'admin' : 'system'),
         before: { activeVersion: failedVersion },
         after: { activeVersion: fallbackVersion },
         source: {
@@ -526,18 +644,16 @@ export class AuditLogService {
       // Since we store entity info in metadata, we need to query the JSONB field
       const logs = await this.auditLogRepository
         .createQueryBuilder('audit_log')
-        .leftJoinAndSelect('audit_log.user', 'user')
-        .where("audit_log.metadata->>'entityType' = :entityType", {
-          entityType,
-        })
-        .andWhere("audit_log.metadata->>'entityId' = :entityId", { entityId })
-        .orderBy('audit_log.timestamp', 'DESC')
+        .leftJoinAndSelect('audit_log.admin', 'admin')
+        .where('audit_log.entityType = :entityType', { entityType })
+        .andWhere('audit_log.entityId = :entityId', { entityId })
+        .orderBy('audit_log.createdAt', 'DESC')
         .getMany();
 
       return logs;
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error(
-        `Failed to find audit logs by entity: ${error.message}`,
+        `Failed to find audit logs by entity: ${error instanceof Error ? error.message : String(error)}`,
       );
       return [];
     }
@@ -546,15 +662,22 @@ export class AuditLogService {
   /**
    * Find audit logs by user
    */
-  async findByUser(userId: string): Promise<AuditLog[]> {
+  async findByUser(userId: string | number): Promise<AuditLog[]> {
+    const normalizedUserId = this.toNullableUserId(userId);
+    if (normalizedUserId === null) {
+      return [];
+    }
+
     try {
       return this.auditLogRepository.find({
-        where: { userId },
-        order: { timestamp: 'DESC' },
-        relations: ['user'],
+        where: { adminId: normalizedUserId },
+        order: { createdAt: 'DESC' },
+        relations: ['admin'],
       });
-    } catch (error) {
-      this.logger.error(`Failed to find audit logs by user: ${error.message}`);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to find audit logs by user: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return [];
     }
   }
@@ -563,7 +686,7 @@ export class AuditLogService {
    * Get audit logs with filtering and pagination
    */
   async findAll(options: {
-    userId?: string;
+    userId?: string | number;
     actorId?: string;
     actorType?: string;
     actionType?: AuditActionType;
@@ -581,19 +704,32 @@ export class AuditLogService {
     try {
       const query = this.auditLogRepository
         .createQueryBuilder('audit_log')
-        .leftJoinAndSelect('audit_log.user', 'user');
+        .leftJoinAndSelect('audit_log.admin', 'admin');
 
       if (options.userId) {
-        query.andWhere('audit_log.user_id = :userId', {
-          userId: options.userId,
+        const normalizedUserId = this.toNullableUserId(options.userId);
+        if (normalizedUserId === null) {
+          return {
+            logs: [],
+            total: 0,
+            limit: options.limit || 100,
+            offset: options.offset || 0,
+          };
+        }
+        query.andWhere('audit_log.admin_id = :userId', {
+          userId: normalizedUserId,
         });
       }
 
       if (options.actorId) {
+        const normalizedActorId = this.toNullableUserId(options.actorId);
         query.andWhere(
-          "(audit_log.user_id = :actorId OR audit_log.metadata->>'actorId' = :actorId)",
+          normalizedActorId === null
+            ? "audit_log.metadata->>'actorId' = :actorIdRaw"
+            : "(audit_log.admin_id = :actorId OR audit_log.metadata->>'actorId' = :actorIdRaw)",
           {
-            actorId: options.actorId,
+            actorId: normalizedActorId,
+            actorIdRaw: options.actorId,
           },
         );
       }
@@ -605,19 +741,19 @@ export class AuditLogService {
       }
 
       if (options.actionType) {
-        query.andWhere('audit_log.action_type = :actionType', {
+        query.andWhere('audit_log.action = :actionType', {
           actionType: options.actionType,
         });
       }
 
       if (options.entityType) {
-        query.andWhere("audit_log.metadata->>'entityType' = :entityType", {
+        query.andWhere('audit_log.entity_type = :entityType', {
           entityType: options.entityType,
         });
       }
 
       if (options.entityId) {
-        query.andWhere("audit_log.metadata->>'entityId' = :entityId", {
+        query.andWhere('audit_log.entity_id = :entityId', {
           entityId: options.entityId,
         });
       }
@@ -653,18 +789,18 @@ export class AuditLogService {
       }
 
       if (options.startDate) {
-        query.andWhere('audit_log.timestamp >= :startDate', {
+        query.andWhere('audit_log.createdAt >= :startDate', {
           startDate: options.startDate,
         });
       }
 
       if (options.endDate) {
-        query.andWhere('audit_log.timestamp <= :endDate', {
+        query.andWhere('audit_log.createdAt <= :endDate', {
           endDate: options.endDate,
         });
       }
 
-      query.orderBy('audit_log.timestamp', 'DESC');
+      query.orderBy('audit_log.createdAt', 'DESC');
       query.limit(options.limit || 100);
       query.offset(options.offset || 0);
 
@@ -676,8 +812,10 @@ export class AuditLogService {
         limit: options.limit || 100,
         offset: options.offset || 0,
       };
-    } catch (error) {
-      this.logger.error(`Failed to get audit logs: ${error.message}`);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to get audit logs: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return {
         logs: [],
         total: 0,
@@ -697,11 +835,11 @@ export class AuditLogService {
         this.auditLogRepository.createQueryBuilder('audit_log');
 
       if (startDate) {
-        countQuery.andWhere('audit_log.timestamp >= :startDate', { startDate });
+        countQuery.andWhere('audit_log.createdAt >= :startDate', { startDate });
       }
 
       if (endDate) {
-        countQuery.andWhere('audit_log.timestamp <= :endDate', { endDate });
+        countQuery.andWhere('audit_log.createdAt <= :endDate', { endDate });
       }
 
       // Get total count before modifying the query for group by
@@ -712,25 +850,27 @@ export class AuditLogService {
         this.auditLogRepository.createQueryBuilder('audit_log');
 
       if (startDate) {
-        statsQuery.andWhere('audit_log.timestamp >= :startDate', { startDate });
+        statsQuery.andWhere('audit_log.createdAt >= :startDate', { startDate });
       }
 
       if (endDate) {
-        statsQuery.andWhere('audit_log.timestamp <= :endDate', { endDate });
+        statsQuery.andWhere('audit_log.createdAt <= :endDate', { endDate });
       }
 
       const actionTypeCounts = await statsQuery
-        .select('audit_log.action_type', 'actionType')
+        .select('audit_log.action', 'actionType')
         .addSelect('COUNT(*)', 'count')
-        .groupBy('audit_log.action_type')
+        .groupBy('audit_log.action')
         .getRawMany();
 
       return {
         totalLogs,
         actionTypeCounts,
       };
-    } catch (error) {
-      this.logger.error(`Failed to get audit log statistics: ${error.message}`);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to get audit log statistics: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return {
         totalLogs: 0,
         actionTypeCounts: [],
@@ -757,8 +897,8 @@ export class AuditLogService {
 
       const query = this.auditLogRepository
         .createQueryBuilder('audit_log')
-        .leftJoinAndSelect('audit_log.user', 'user')
-        .where('audit_log.action_type IN (:...actionTypes)', {
+        .leftJoinAndSelect('audit_log.admin', 'admin')
+        .where('audit_log.action IN (:...actionTypes)', {
           actionTypes: rolloutActionTypes,
         });
 
@@ -778,25 +918,28 @@ export class AuditLogService {
       }
 
       if (options.actorId) {
+        const normalizedActorId = this.toNullableUserId(options.actorId);
         query.andWhere(
-          "(audit_log.user_id = :actorId OR audit_log.metadata->>'actorId' = :actorId)",
-          { actorId: options.actorId },
+          normalizedActorId === null
+            ? "audit_log.metadata->>'actorId' = :actorIdRaw"
+            : "(audit_log.admin_id = :actorId OR audit_log.metadata->>'actorId' = :actorIdRaw)",
+          { actorId: normalizedActorId, actorIdRaw: options.actorId },
         );
       }
 
       if (options.startDate) {
-        query.andWhere('audit_log.timestamp >= :startDate', {
+        query.andWhere('audit_log.createdAt >= :startDate', {
           startDate: options.startDate,
         });
       }
 
       if (options.endDate) {
-        query.andWhere('audit_log.timestamp <= :endDate', {
+        query.andWhere('audit_log.createdAt <= :endDate', {
           endDate: options.endDate,
         });
       }
 
-      query.orderBy('audit_log.timestamp', 'DESC');
+      query.orderBy('audit_log.createdAt', 'DESC');
       query.limit(options.limit || 100);
       query.offset(options.offset || 0);
 
@@ -808,9 +951,9 @@ export class AuditLogService {
         limit: options.limit || 100,
         offset: options.offset || 0,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error(
-        `Failed to get template rollout history: ${error.message}`,
+        `Failed to get template rollout history: ${error instanceof Error ? error.message : String(error)}`,
       );
       return {
         logs: [],
@@ -841,11 +984,11 @@ export class AuditLogService {
 
       const query = this.auditLogRepository
         .createQueryBuilder('audit_log')
-        .leftJoinAndSelect('audit_log.user', 'user')
-        .where('audit_log.action_type IN (:...actionTypes)', {
+        .leftJoinAndSelect('audit_log.admin', 'admin')
+        .where('audit_log.action IN (:...actionTypes)', {
           actionTypes: exportActionTypes,
         })
-        .andWhere("audit_log.metadata->>'entityType' = :entityType", {
+        .andWhere('audit_log.entity_type = :entityType', {
           entityType: 'data_export',
         });
 
@@ -865,9 +1008,12 @@ export class AuditLogService {
       }
 
       if (options.actorId) {
+        const normalizedActorId = this.toNullableUserId(options.actorId);
         query.andWhere(
-          "(audit_log.user_id = :actorId OR audit_log.metadata->>'actorId' = :actorId)",
-          { actorId: options.actorId },
+          normalizedActorId === null
+            ? "audit_log.metadata->>'actorId' = :actorIdRaw"
+            : "(audit_log.admin_id = :actorId OR audit_log.metadata->>'actorId' = :actorIdRaw)",
+          { actorId: normalizedActorId, actorIdRaw: options.actorId },
         );
       }
 
@@ -878,18 +1024,18 @@ export class AuditLogService {
       }
 
       if (options.startDate) {
-        query.andWhere('audit_log.timestamp >= :startDate', {
+        query.andWhere('audit_log.createdAt >= :startDate', {
           startDate: options.startDate,
         });
       }
 
       if (options.endDate) {
-        query.andWhere('audit_log.timestamp <= :endDate', {
+        query.andWhere('audit_log.createdAt <= :endDate', {
           endDate: options.endDate,
         });
       }
 
-      query.orderBy('audit_log.timestamp', 'DESC');
+      query.orderBy('audit_log.createdAt', 'DESC');
       query.limit(options.limit || 100);
       query.offset(options.offset || 0);
 
@@ -901,8 +1047,10 @@ export class AuditLogService {
         limit: options.limit || 100,
         offset: options.offset || 0,
       };
-    } catch (error) {
-      this.logger.error(`Failed to get export access trail: ${error.message}`);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to get export access trail: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return {
         logs: [],
         total: 0,
@@ -910,5 +1058,67 @@ export class AuditLogService {
         offset: options.offset || 0,
       };
     }
+  }
+
+  private createActor(
+    type: AuditActorType,
+    id: string | number,
+    overrides?: {
+      userId?: string | number | null;
+      label?: string;
+      source?: string | null;
+    },
+  ): AuditActor {
+    const actorId = String(id);
+    const actorUserId =
+      overrides?.userId !== undefined
+        ? overrides.userId === null ||
+          overrides.userId === undefined ||
+          overrides.userId === ''
+          ? null
+          : String(overrides.userId)
+        : type === 'user' || type === 'admin'
+          ? actorId
+          : null;
+
+    return {
+      type,
+      id: actorId,
+      userId: actorUserId,
+      label: overrides?.label,
+      source: overrides?.source,
+    };
+  }
+
+  private resolveActor(dto: CreateAuditLogDto): AuditActor | null {
+    if (dto.context?.actor?.id) {
+      return dto.context.actor;
+    }
+
+    const metadataActorType = dto.metadata?.actorType as
+      | AuditActorType
+      | undefined;
+    const metadataActorId = dto.metadata?.actorId
+      ? String(dto.metadata.actorId)
+      : undefined;
+
+    if (metadataActorType && metadataActorId) {
+      return this.createActor(metadataActorType, metadataActorId, {
+        userId:
+          metadataActorType === 'user' || metadataActorType === 'admin'
+            ? metadataActorId
+            : null,
+        label: dto.metadata?.actorLabel as string | undefined,
+        source: dto.metadata?.actorSource as string | null | undefined,
+      });
+    }
+
+    if (dto.context?.userId) {
+      return this.createActor('user', String(dto.context.userId), {
+        userId: dto.context.userId,
+      });
+    }
+
+    return null;
   }
 }

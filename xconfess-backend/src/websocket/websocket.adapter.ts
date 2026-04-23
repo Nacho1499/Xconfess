@@ -74,20 +74,33 @@ export class WebSocketAdapter extends IoAdapter {
 
       const hasToken = Boolean(
         socket.handshake?.auth?.token ||
-          socket.handshake?.headers?.authorization,
+        socket.handshake?.headers?.authorization,
       );
 
-      logger.log(
-        `[WS_CONNECT] Namespace: ${namespace}, Socket: ${socket.id}, IP: ${ip}, HasToken: ${hasToken}`,
-      );
+      logger.log({
+        event: 'WS_CONNECT',
+        namespace,
+        socketId: socket.id,
+        ip,
+        hasToken,
+        msg: `Connection attempt on ${namespace}`,
+      });
 
       // For sensitive namespaces we log a warning when there's no token so
       // that ops can spot unauthenticated probes without blocking at this layer.
       const sensitiveNamespaces = ['/notifications', '/admin'];
-      if (sensitiveNamespaces.some((ns) => namespace.startsWith(ns)) && !hasToken) {
-        logger.warn(
-          `[WS_CONNECT_NO_TOKEN] Unauthenticated connection attempt on sensitive namespace ${namespace} from ${ip} (socket: ${socket.id})`,
-        );
+      if (
+        sensitiveNamespaces.some((ns) => namespace.startsWith(ns)) &&
+        !hasToken
+      ) {
+        logger.warn({
+          event: 'WS_CONNECT_NO_TOKEN',
+          reason: 'UNAUTHENTICATED_PROBE',
+          namespace,
+          ip,
+          socketId: socket.id,
+          msg: `Unauthenticated connection attempt on sensitive namespace ${namespace} from ${ip}`,
+        });
       }
 
       next();
@@ -96,4 +109,3 @@ export class WebSocketAdapter extends IoAdapter {
     return server;
   }
 }
-

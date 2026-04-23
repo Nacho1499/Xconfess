@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import QueryProvider from "./components/providers/QueryProvider";
 import { AuthProvider } from "./lib/providers/AuthProvider";
+import { ThemeProvider } from "./lib/providers/ThemeProvider";
 import { ToastProvider } from "@/app/components/common/Toast";
 import { ErrorBoundary } from "@/app/components/common/ErrorBoundary";
 
@@ -24,17 +25,19 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
         <ErrorBoundary>
-          <AuthProvider>
-            <QueryProvider>
-              <ToastProvider>
-                {children}
+          <ThemeProvider>
+            <AuthProvider>
+              <QueryProvider>
+                <ToastProvider>
+                  {children}
 
-                {/* Onboarding system */}
-                <OnboardingFlow />
-                <HelpButton />
-              </ToastProvider>
-            </QueryProvider>
-          </AuthProvider>
+                  {/* Onboarding system */}
+                  <OnboardingFlow />
+                  <HelpButton />
+                </ToastProvider>
+              </QueryProvider>
+            </AuthProvider>
+          </ThemeProvider>
         </ErrorBoundary>
       </body>
     </html>

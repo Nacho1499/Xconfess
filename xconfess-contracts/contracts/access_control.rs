@@ -35,7 +35,7 @@
 //! | `admin_revoked`     | `{ address: Address }`        |
 //! | `ownership_xfer`    | `{ from: Address, to: Address }` |
 
-use soroban_sdk::{contracttype, symbol_short, Address, Env, Map};
+use soroban_sdk::{contractevent, contracttype, Address, Env, Map, String};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Storage keys
@@ -79,29 +79,54 @@ pub enum AccessError {
     InvalidOwnershipTransfer = 8,
 }
 
+#[contractevent(topics = ["adm_grant"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AdminGrantedEvent {
+    #[topic]
+    address: Address,
+}
+
+#[contractevent(topics = ["adm_revke"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AdminRevokedEvent {
+    #[topic]
+    address: Address,
+}
+
+#[contractevent(topics = ["own_xfer"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnershipTransferredEvent {
+    #[topic]
+    new_owner: Address,
+    previous_owner: Address,
+}
+
+#[contractevent(topics = ["gov_inv"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GovernanceInvariantEvent {
+    operation: String,
+    reason: String,
+    caller: Address,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Initialization
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Set the initial owner. Must be called exactly once (from `initialize`).
 /// Panics if an owner is already recorded — prevents re-initialization attacks.
-pub fn init_owner(env: &Env, owner: &Address) {
-    if env
-        .storage()
-        .instance()
-        .has(&AccessKey::Owner)
-    {
-        panic!("already initialized");
+/// Refactored
+pub fn init_owner(env: &Env, owner: &Address) -> Result<(), AccessError> {
+    if env.storage().instance().has(&AccessKey::Owner) {
+        return Err(AccessError::NotInitialized); // or introduce AlreadyInitialized
     }
-    env.storage()
-        .instance()
-        .set(&AccessKey::Owner, owner);
 
-    // Initialize the admin set as empty
+    env.storage().instance().set(&AccessKey::Owner, owner);
+
     let admins: Map<Address, ()> = Map::new(env);
-    env.storage()
-        .instance()
-        .set(&AccessKey::Admins, &admins);
+    env.storage().instance().set(&AccessKey::Admins, &admins);
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -110,16 +135,16 @@ pub fn init_owner(env: &Env, owner: &Address) {
 
 /// Returns the current owner address.
 /// Panics with `AccessError::NotInitialized` if `init_owner` was never called.
-pub fn get_owner(env: &Env) -> Address {
+pub fn get_owner(env: &Env) -> Result<Address, AccessError> {
     env.storage()
         .instance()
         .get(&AccessKey::Owner)
-        .unwrap_or_else(|| panic!("{}", AccessError::NotInitialized as u32))
+        .ok_or(AccessError::NotInitialized)
 }
 
 /// Returns `true` if `addr` is the current owner.
-pub fn is_owner(env: &Env, addr: &Address) -> bool {
-    get_owner(env) == *addr
+pub fn is_owner(env: &Env, addr: &Address) -> Result<bool, AccessError> {
+    Ok(get_owner(env)? == *addr)
 }
 
 /// Returns `true` if `addr` is in the admin set (owner is NOT implicitly
@@ -135,8 +160,8 @@ pub fn is_admin(env: &Env, addr: &Address) -> bool {
 
 /// Returns `true` if `addr` is the owner OR is an explicit admin.
 /// Use this as the guard predicate for moderation-level actions (e.g. `resolve`).
-pub fn is_authorized(env: &Env, addr: &Address) -> bool {
-    is_owner(env, addr) || is_admin(env, addr)
+pub fn is_authorized(env: &Env, addr: &Address) -> Result<bool, AccessError> {
+    is_owner(env, addr).map(|owner| owner || is_admin(env, addr))
 }
 
 /// Returns the total number of active admins (excluding the owner).
@@ -147,7 +172,7 @@ pub fn count_admins(env: &Env) -> u32 {
         .instance()
         .get(&AccessKey::Admins)
         .unwrap_or_else(|| Map::new(env));
-    admins.len() as u32
+    admins.len()
 }
 
 /// Returns the total number of authorized addresses (owner + admins).
@@ -163,20 +188,27 @@ pub fn count_authorized(env: &Env) -> u32 {
 
 /// Require that `caller` is the owner and has signed the invocation.
 /// Panics with `AccessError::NotOwner` otherwise.
-pub fn require_owner(env: &Env, caller: &Address) {
+pub fn require_owner(env: &Env, caller: &Address) -> Result<(), AccessError> {
     caller.require_auth();
-    if !is_owner(env, caller) {
-        panic!("{}", AccessError::NotOwner as u32);
+
+    let owner = get_owner(env)?;
+    if owner != *caller {
+        return Err(AccessError::NotOwner);
     }
+
+    Ok(())
 }
 
 /// Require that `caller` is the owner OR an admin and has signed.
 /// Panics with `AccessError::NotAuthorized` otherwise.
-pub fn require_admin_or_owner(env: &Env, caller: &Address) {
+pub fn require_admin_or_owner(env: &Env, caller: &Address) -> Result<(), AccessError> {
     caller.require_auth();
-    if !is_authorized(env, caller) {
-        panic!("{}", AccessError::NotAuthorized as u32);
+
+    if !is_authorized(env, caller)? {
+        return Err(AccessError::NotAuthorized);
     }
+
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -188,15 +220,14 @@ pub fn require_admin_or_owner(env: &Env, caller: &Address) {
 /// * Caller must be the owner.
 /// * Panics with `AccessError::AlreadyAdmin` if `target` is already an admin.
 /// * Emits `admin_granted` event.
-pub fn grant_admin(env: &Env, caller: &Address, target: &Address) {
-    require_owner(env, caller);
-    internal_grant_admin(env, target);
+pub fn grant_admin(env: &Env, caller: &Address, target: &Address) -> Result<(), AccessError> {
+    require_owner(env, caller)?;
+    internal_grant_admin(env, target)
 }
 
-pub fn internal_grant_admin(env: &Env, target: &Address) {
-
+pub fn internal_grant_admin(env: &Env, target: &Address) -> Result<(), AccessError> {
     if is_admin(env, target) {
-        panic!("{}", AccessError::AlreadyAdmin as u32);
+        return Err(AccessError::AlreadyAdmin);
     }
 
     let mut admins: Map<Address, ()> = env
@@ -206,15 +237,14 @@ pub fn internal_grant_admin(env: &Env, target: &Address) {
         .unwrap_or_else(|| Map::new(env));
 
     admins.set(target.clone(), ());
-    env.storage()
-        .instance()
-        .set(&AccessKey::Admins, &admins);
+    env.storage().instance().set(&AccessKey::Admins, &admins);
 
-    // Emit audit event
-    env.events().publish(
-        (symbol_short!("adm_grant"), target.clone()),
-        target.clone(),
-    );
+    AdminGrantedEvent {
+        address: target.clone(),
+    }
+    .publish(env);
+
+    Ok(())
 }
 
 /// Revoke `target`'s admin role.
@@ -224,32 +254,36 @@ pub fn internal_grant_admin(env: &Env, target: &Address) {
 /// * Panics with `AccessError::CannotDemoteOwner` if `target` is the owner
 ///   (the owner is always implicitly authorized; removing them from the admin
 ///   map would create misleading authorization state).
-/// * Panics with `AccessError::CannotRevokeLastAdmin` if revoking would leave 
+/// * Panics with `AccessError::CannotRevokeLastAdmin` if revoking would leave
 ///   the contract with zero authorized addresses.
 /// * Emits `admin_revoked` event.
-pub fn revoke_admin(env: &Env, caller: &Address, target: &Address) {
-    require_owner(env, caller);
-    internal_revoke_admin(env, target, caller);
+pub fn revoke_admin(env: &Env, caller: &Address, target: &Address) -> Result<(), AccessError> {
+    require_owner(env, caller)?;
+    internal_revoke_admin(env, target, caller)
 }
 
-pub fn internal_revoke_admin(env: &Env, target: &Address, caller: &Address) {
-    if is_owner(env, target) {
-        panic!("{}", AccessError::CannotDemoteOwner as u32);
+pub fn internal_revoke_admin(
+    env: &Env,
+    target: &Address,
+    caller: &Address,
+) -> Result<(), AccessError> {
+    if is_owner(env, target)? {
+        return Err(AccessError::CannotDemoteOwner);
     }
 
     if !is_admin(env, target) {
-        panic!("{}", AccessError::NotAdmin as u32);
+        return Err(AccessError::NotAdmin);
     }
 
-    // Check minimum-admin invariant: ensure at least one authorized address remains
     let current_admins = count_admins(env);
     if current_admins <= 1 {
-        // Emit governance failure event before panicking
-        env.events().publish(
-            (symbol_short!("gov_inv"),),
-            ("revoke_admin", "Cannot revoke last admin - would leave contract with insufficient authorized addresses", caller.clone()),
-        );
-        panic!("{}", AccessError::CannotRevokeLastAdmin as u32);
+        GovernanceInvariantEvent {
+            operation: String::from_str(env, "revoke_admin"),
+            reason: String::from_str(env, "Cannot revoke last admin"),
+            caller: caller.clone(),
+        }
+        .publish(env);
+        return Err(AccessError::CannotRevokeLastAdmin);
     }
 
     let mut admins: Map<Address, ()> = env
@@ -259,15 +293,14 @@ pub fn internal_revoke_admin(env: &Env, target: &Address, caller: &Address) {
         .unwrap_or_else(|| Map::new(env));
 
     admins.remove(target.clone());
-    env.storage()
-        .instance()
-        .set(&AccessKey::Admins, &admins);
+    env.storage().instance().set(&AccessKey::Admins, &admins);
 
-    // Emit audit event
-    env.events().publish(
-        (symbol_short!("adm_revoke"), target.clone()),
-        target.clone(),
-    );
+    AdminRevokedEvent {
+        address: target.clone(),
+    }
+    .publish(env);
+
+    Ok(())
 }
 
 /// Transfer contract ownership to `new_owner`.
@@ -279,27 +312,29 @@ pub fn internal_revoke_admin(env: &Env, target: &Address, caller: &Address) {
 /// * `new_owner` is NOT automatically added to the admin set; they are the
 ///   owner, which is a superset of admin.
 /// * Emits `own_xfer` event carrying both old and new addresses.
-pub fn transfer_ownership(env: &Env, caller: &Address, new_owner: &Address) {
-    require_owner(env, caller);
-    internal_transfer_ownership(env, new_owner);
+pub fn transfer_ownership(
+    env: &Env,
+    caller: &Address,
+    new_owner: &Address,
+) -> Result<(), AccessError> {
+    require_owner(env, caller)?;
+    internal_transfer_ownership(env, new_owner)
 }
 
-pub fn internal_transfer_ownership(env: &Env, new_owner: &Address) {
-    // Snapshot old owner for validation and event before overwriting
-    let old_owner = get_owner(env);
-    
-    // Prevent invalid transfer to same address
+pub fn internal_transfer_ownership(env: &Env, new_owner: &Address) -> Result<(), AccessError> {
+    let old_owner = get_owner(env)?;
+
     if old_owner == *new_owner {
-        panic!("{}", AccessError::InvalidOwnershipTransfer as u32);
+        return Err(AccessError::InvalidOwnershipTransfer);
     }
 
-    env.storage()
-        .instance()
-        .set(&AccessKey::Owner, new_owner);
+    env.storage().instance().set(&AccessKey::Owner, new_owner);
 
-    // Emit audit event: topic carries new_owner; data carries old owner
-    env.events().publish(
-        (symbol_short!("own_xfer"), new_owner.clone()),
-        old_owner,
-    );
+    OwnershipTransferredEvent {
+        new_owner: new_owner.clone(),
+        previous_owner: old_owner,
+    }
+    .publish(env);
+
+    Ok(())
 }

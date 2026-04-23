@@ -34,8 +34,6 @@ export const getTypeOrmConfig = (
     entities: [__dirname + '/../**/*.entity{.ts,.js}'],
 
     migrations: [__dirname + '/../../migrations/*{.ts,.js}'],
-    migrationsRun: true,
-    migrations: [process.cwd() + '/migrations/*.{ts,js}'],
     migrationsRun: !['test', 'ci'].includes(nodeEnv),
 
     synchronize,

@@ -1,4 +1,7 @@
-use soroban_sdk::{contractimpl, contracttype, symbol, Env, String as SorobanString, Symbol, Storage};
+use soroban_sdk::{
+    contractevent, contractimpl, contracttype, symbol, Env, String as SorobanString, Symbol,
+    Storage,
+};
 use crate::{
     report_key, ERR_COOLDOWN_ACTIVE, ERR_DUPLICATE_REPORT, ERR_REASON_EMPTY, ERR_REASON_TOO_LONG,
 };
@@ -13,6 +16,18 @@ enum ReportNonceKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReportSubmittedEvent {
     pub confession_id: Symbol,
+    pub actor: Symbol,
+    pub reason: SorobanString,
+    pub nonce: u64,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["report"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReportSubmittedLedgerEvent {
+    #[topic]
+    pub confession_id: Symbol,
+    #[topic]
     pub actor: Symbol,
     pub reason: SorobanString,
     pub nonce: u64,
@@ -89,14 +104,14 @@ impl ReportContract {
 
         // Emit deterministic report lifecycle event with monotonic nonce.
         let nonce = Self::bump_nonce(&env, &confession_id);
-        let payload = ReportSubmittedEvent {
+        let payload = ReportSubmittedLedgerEvent {
             confession_id: confession_id.clone(),
             actor: actor.clone(),
             reason,
             nonce,
             timestamp: env.ledger().timestamp(),
         };
-        env.events().publish((symbol!("report"),), payload);
+        payload.publish(&env);
 
         Ok(())
     }

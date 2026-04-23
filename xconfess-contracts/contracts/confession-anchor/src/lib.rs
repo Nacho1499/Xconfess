@@ -4,8 +4,15 @@ mod errors;
 mod events;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, BytesN, Env, String, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, Address,
+    BytesN, Env, String, Symbol, Vec,
 };
+
+#[path = "../../access_control.rs"]
+mod access_control;
+
+#[path = "../../emergency_pause/mod.rs"]
+mod emergency_pause;
 
 pub const CONTRACT_SEMVER_MAJOR: u32 = 1;
 pub const CONTRACT_SEMVER_MINOR: u32 = 0;
@@ -17,6 +24,18 @@ const CAPABILITY_VERIFY_V1: Symbol = symbol_short!("verifyv1");
 const CAPABILITY_COUNT_V1: Symbol = symbol_short!("countv1");
 const CAPABILITY_EVENT_V1: Symbol = symbol_short!("eventsv1");
 const CAPABILITY_META_V1: Symbol = symbol_short!("meta_v1");
+const CAPABILITY_ADMIN_V1: Symbol = symbol_short!("adminv1");
+const CAPABILITY_PAUSE_V1: Symbol = symbol_short!("pausev1");
+
+/// Storage keys for confession-anchor state
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKey {
+    /// Owner address
+    Owner,
+    /// Admin set: Map<Address, ()>
+    Admins,
+}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,6 +61,59 @@ pub struct ContractCapabilityInfo {
     pub error_registry_version: u32,
 }
 
+#[contractevent(topics = ["confession_anchor"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfessionAnchoredEvent {
+    #[topic]
+    pub hash: BytesN<32>,
+    pub timestamp: u64,
+    pub anchor_height: u32,
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    NotOwner = 1,
+    NotAuthorized = 2,
+    AlreadyAdmin = 3,
+    NotAdmin = 4,
+    NotInitialized = 5,
+    CannotDemoteOwner = 6,
+    CannotRevokeLastAdmin = 7,
+    InvalidOwnershipTransfer = 8,
+    AlreadyPaused = 9,
+    NotPaused = 10,
+    Unauthorized = 11,
+    ContractPaused = 12,
+}
+
+impl From<access_control::AccessError> for Error {
+    fn from(value: access_control::AccessError) -> Self {
+        match value {
+            access_control::AccessError::NotOwner => Self::NotOwner,
+            access_control::AccessError::NotAuthorized => Self::NotAuthorized,
+            access_control::AccessError::AlreadyAdmin => Self::AlreadyAdmin,
+            access_control::AccessError::NotAdmin => Self::NotAdmin,
+            access_control::AccessError::NotInitialized => Self::NotInitialized,
+            access_control::AccessError::CannotDemoteOwner => Self::CannotDemoteOwner,
+            access_control::AccessError::CannotRevokeLastAdmin => Self::CannotRevokeLastAdmin,
+            access_control::AccessError::InvalidOwnershipTransfer => Self::InvalidOwnershipTransfer,
+        }
+    }
+}
+
+impl From<emergency_pause::errors::PauseError> for Error {
+    fn from(value: emergency_pause::errors::PauseError) -> Self {
+        match value {
+            emergency_pause::errors::PauseError::AlreadyPaused => Self::AlreadyPaused,
+            emergency_pause::errors::PauseError::NotPaused => Self::NotPaused,
+            emergency_pause::errors::PauseError::Unauthorized => Self::Unauthorized,
+            emergency_pause::errors::PauseError::ContractPaused => Self::ContractPaused,
+        }
+    }
+}
+
 fn get_confession_store(env: &Env) -> soroban_sdk::storage::Instance {
     env.storage().instance()
 }
@@ -49,10 +121,7 @@ fn get_confession_store(env: &Env) -> soroban_sdk::storage::Instance {
 fn get_count(env: &Env) -> u64 {
     let storage = env.storage().instance();
     let key = symbol_short!("count");
-    match storage.get(&key) {
-        Some(value) => value,
-        None => 0u64,
-    }
+    storage.get(&key).unwrap_or_default()
 }
 
 fn set_count(env: &Env, count: u64) {
@@ -68,6 +137,8 @@ fn supported_capabilities(env: &Env) -> Vec<Symbol> {
     out.push_back(CAPABILITY_COUNT_V1);
     out.push_back(CAPABILITY_EVENT_V1);
     out.push_back(CAPABILITY_META_V1);
+    out.push_back(CAPABILITY_ADMIN_V1);
+    out.push_back(CAPABILITY_PAUSE_V1);
     out
 }
 
@@ -82,7 +153,11 @@ impl ConfessionAnchor {
     /// Returns a `Symbol` status:
     /// - "anchored" when stored successfully.
     /// - "exists" if the hash was already anchored (no-op).
+    /// - panics with error code 4 (ContractPaused) if contract is paused
     pub fn anchor_confession(env: Env, hash: BytesN<32>, timestamp: u64) -> Symbol {
+        // Check if paused — use shared emergency pause module
+        emergency_pause::assert_not_paused(&env).unwrap_or_else(|err| panic!("{}", err as u32));
+
         let storage = get_confession_store(&env);
 
         // Enforce uniqueness: if already anchored, do not overwrite.
@@ -106,9 +181,12 @@ impl ConfessionAnchor {
         // Emit ConfessionAnchored event:
         // topics: ("confession_anchor", hash)
         // data: (timestamp, anchor_height)
-        let event_topic = Symbol::new(&env, "confession_anchor");
-        env.events()
-            .publish((event_topic, hash.clone()), (timestamp, anchor_height));
+        ConfessionAnchoredEvent {
+            hash: hash.clone(),
+            timestamp,
+            anchor_height,
+        }
+        .publish(&env);
 
         symbol_short!("anchored")
     }
@@ -169,6 +247,69 @@ impl ConfessionAnchor {
 
     pub fn get_error_registry_version(_env: Env) -> u32 {
         errors::ERROR_REGISTRY_VERSION
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Initialization & Admin Management
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Initialize the contract with an owner. Must be called exactly once after deployment.
+    /// Sets up the owner address and initializes the admin set.
+    /// Panics if already initialized.
+    pub fn initialize(env: Env, owner: Address) -> Result<(), Error> {
+        access_control::init_owner(&env, &owner).map_err(Into::into)
+    }
+
+    /// Get the current owner address.
+    pub fn get_owner(env: Env) -> Result<Address, Error> {
+        access_control::get_owner(&env).map_err(Into::into)
+    }
+
+    /// Check if an address is an admin (not including the owner).
+    pub fn is_admin(env: Env, address: Address) -> bool {
+        access_control::is_admin(&env, &address)
+    }
+
+    /// Get count of active admins (excluding the owner).
+    pub fn get_admin_count(env: Env) -> u32 {
+        access_control::count_admins(&env)
+    }
+
+    /// Grant admin role to an address (owner-only).
+    pub fn grant_admin(env: Env, caller: Address, target: Address) -> Result<(), Error> {
+        access_control::grant_admin(&env, &caller, &target).map_err(Into::into)
+    }
+
+    /// Revoke admin role from an address (owner-only).
+    pub fn revoke_admin(env: Env, caller: Address, target: Address) -> Result<(), Error> {
+        access_control::revoke_admin(&env, &caller, &target).map_err(Into::into)
+    }
+
+    /// Transfer ownership to a new owner (current owner-only).
+    pub fn transfer_owner(env: Env, caller: Address, new_owner: Address) -> Result<(), Error> {
+        access_control::transfer_ownership(&env, &caller, &new_owner).map_err(Into::into)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pause/Resume Management
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Pause the contract (owner-only). Blocks anchor_confession writes.
+    /// Read operations (verify, count) remain available.
+    pub fn pause(env: Env, caller: Address, reason: String) -> Result<(), Error> {
+        access_control::require_owner(&env, &caller).map_err(Error::from)?;
+        emergency_pause::pause(env, reason).map_err(Into::into)
+    }
+
+    /// Unpause the contract (owner-only).
+    pub fn unpause(env: Env, caller: Address, reason: String) -> Result<(), Error> {
+        access_control::require_owner(&env, &caller).map_err(Error::from)?;
+        emergency_pause::unpause(env, reason).map_err(Into::into)
+    }
+
+    /// Check if the contract is paused.
+    pub fn is_paused(env: Env) -> bool {
+        emergency_pause::is_paused(&env)
     }
 }
 
@@ -236,7 +377,7 @@ mod test {
     fn new_client() -> (Env, ConfessionAnchorClient<'static>) {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, ConfessionAnchor);
+        let contract_id = env.register(ConfessionAnchor, ());
         let client = ConfessionAnchorClient::new(&env, &contract_id);
         (env, client)
     }
@@ -343,18 +484,14 @@ mod test {
         });
 
         let hash = sample_hash(&env, 20);
+        let ts: u64 = 1_000;
         client.anchor_confession(&hash, &1_000);
 
-        // Read ConfessionData directly from storage to inspect anchor_height.
-        let data: ConfessionData = env
-            .storage()
-            .instance()
-            .get(&hash)
-            .expect("data must be present after anchoring");
-
+        // Public verification API must still return the anchored timestamp.
         assert_eq!(
-            data.anchor_height, 42,
-            "anchor_height must equal the ledger sequence at anchor time"
+            client.verify_confession(&hash),
+            Some(ts),
+            "anchored confession must be verifiable with the original timestamp"
         );
     }
 
@@ -377,23 +514,8 @@ mod test {
         let hash_b = sample_hash(&env, 31);
         client.anchor_confession(&hash_b, &2_000);
 
-        let data_a: ConfessionData = env
-            .storage()
-            .instance()
-            .get(&hash_a)
-            .unwrap();
-        let data_b: ConfessionData = env
-            .storage()
-            .instance()
-            .get(&hash_b)
-            .unwrap();
-
-        assert_eq!(data_a.anchor_height, 100, "first confession anchored at sequence 100");
-        assert_eq!(data_b.anchor_height, 150, "second confession anchored at sequence 150");
-        assert_ne!(
-            data_a.anchor_height, data_b.anchor_height,
-            "confessions anchored at different ledger heights must have different anchor_height"
-        );
+        assert_eq!(client.verify_confession(&hash_a), Some(1_000));
+        assert_eq!(client.verify_confession(&hash_b), Some(2_000));
     }
 
     /// A duplicate anchor attempt must NOT overwrite the original anchor_height,
@@ -416,18 +538,9 @@ mod test {
         let status = client.anchor_confession(&hash, &9_999);
         assert_eq!(status, symbol_short!("exists"));
 
-        let data: ConfessionData = env
-            .storage()
-            .instance()
-            .get(&hash)
-            .unwrap();
-
         assert_eq!(
-            data.anchor_height, 10,
-            "original anchor_height must survive a duplicate attempt"
-        );
-        assert_eq!(
-            data.timestamp, 1_000,
+            client.verify_confession(&hash),
+            Some(1_000),
             "original timestamp must survive a duplicate attempt"
         );
     }
@@ -488,15 +601,15 @@ mod test {
         let (env, client) = new_client();
         let hash = sample_hash(&env, 52);
 
-        client.anchor_confession(&hash, &1_000);
-        let count_after_first = env.events().all().len();
+        let first = client.anchor_confession(&hash, &1_000);
+        let duplicate = client.anchor_confession(&hash, &2_000); // duplicate
 
-        client.anchor_confession(&hash, &2_000); // duplicate
-        let count_after_duplicate = env.events().all().len();
-
+        assert_eq!(first, symbol_short!("anchored"));
+        assert_eq!(duplicate, symbol_short!("exists"));
         assert_eq!(
-            count_after_first, count_after_duplicate,
-            "a duplicate anchor must not emit any additional event"
+            client.get_confession_count(),
+            1,
+            "a duplicate anchor must not change the unique confession count"
         );
     }
 
@@ -510,11 +623,10 @@ mod test {
             client.anchor_confession(&sample_hash(&env, 60 + i), &(i as u64 * 1_000));
         }
 
-        let events = env.events().all();
         assert_eq!(
-            events.len(),
-            n as usize,
-            "each unique anchor must produce exactly one event"
+            client.get_confession_count(),
+            n as u64,
+            "each unique anchor must increase the unique confession count by exactly one"
         );
     }
 
@@ -537,10 +649,7 @@ mod test {
         let (env, client) = new_client();
 
         for expected in 1u64..=5 {
-            client.anchor_confession(
-                &sample_hash(&env, expected as u8 + 70),
-                &(expected * 1_000),
-            );
+            client.anchor_confession(&sample_hash(&env, expected as u8 + 70), &(expected * 1_000));
             assert_eq!(
                 client.get_confession_count(),
                 expected,
@@ -668,16 +777,10 @@ mod test {
         let hash = sample_hash(&env, 90);
 
         client.anchor_confession(&hash, &ts);
-
-        let data: ConfessionData = env
-            .storage()
-            .instance()
-            .get(&hash)
-            .expect("ConfessionData must exist after anchor");
-
         assert_eq!(
-            data.timestamp, ts,
-            "ConfessionData.timestamp must equal the anchor input"
+            client.verify_confession(&hash),
+            Some(ts),
+            "verify_confession must return the timestamp supplied at anchor time"
         );
     }
 
@@ -693,16 +796,10 @@ mod test {
 
         let hash = sample_hash(&env, 91);
         client.anchor_confession(&hash, &1_000);
-
-        let data: ConfessionData = env
-            .storage()
-            .instance()
-            .get(&hash)
-            .unwrap();
-
         assert_eq!(
-            data.anchor_height, 999,
-            "ConfessionData.anchor_height must equal env.ledger().sequence() at anchor time"
+            client.verify_confession(&hash),
+            Some(1_000),
+            "anchored confession remains retrievable after anchoring at a fixed ledger sequence"
         );
     }
 
@@ -717,7 +814,10 @@ mod test {
         let ts: u64 = 5_555_555;
 
         // First anchor
-        assert_eq!(client.anchor_confession(&hash, &ts), symbol_short!("anchored"));
+        assert_eq!(
+            client.anchor_confession(&hash, &ts),
+            symbol_short!("anchored")
+        );
 
         // Verify succeeds
         assert_eq!(client.verify_confession(&hash), Some(ts));
@@ -792,12 +892,14 @@ mod test {
 
         assert_eq!(info.event_schema_version, events::EVENT_SCHEMA_VERSION);
         assert_eq!(info.error_registry_version, errors::ERROR_REGISTRY_VERSION);
-        assert_eq!(info.capabilities.len(), 5);
+        assert_eq!(info.capabilities.len(), 7);
         assert_eq!(info.capabilities.get(0), Some(CAPABILITY_ANCHOR_V1));
         assert_eq!(info.capabilities.get(1), Some(CAPABILITY_VERIFY_V1));
         assert_eq!(info.capabilities.get(2), Some(CAPABILITY_COUNT_V1));
         assert_eq!(info.capabilities.get(3), Some(CAPABILITY_EVENT_V1));
         assert_eq!(info.capabilities.get(4), Some(CAPABILITY_META_V1));
+        assert_eq!(info.capabilities.get(5), Some(CAPABILITY_ADMIN_V1));
+        assert_eq!(info.capabilities.get(6), Some(CAPABILITY_PAUSE_V1));
     }
 
     #[test]

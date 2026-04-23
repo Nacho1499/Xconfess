@@ -53,4 +53,12 @@ export class OutboxEvent {
 
   @Column({ type: 'timestamp', nullable: true })
   processedAt: Date;
+
+  @Column({ nullable: true })
+  @Index()
+  claimedBy: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  @Index()
+  claimedAt: Date;
 }

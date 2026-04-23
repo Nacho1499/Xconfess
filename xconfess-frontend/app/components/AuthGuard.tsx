@@ -27,6 +27,13 @@ interface AuthGuardProps {
 export function AuthGuard({ children }: AuthGuardProps) {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
+  const isDevBypassEnabled =
+    process.env.NODE_ENV === 'development' &&
+    process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === 'true';
+
+  if (isDevBypassEnabled) {
+    return <>{children}</>;
+  }
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {

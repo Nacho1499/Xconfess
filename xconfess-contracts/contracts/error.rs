@@ -6,32 +6,32 @@ pub enum ContractError {
     /// ===========================================
     /// Global / common errors
     /// ===========================================
-    Unauthorized,       // caller not authorized
-    NotFound,           // requested entity not found
-    InvalidInput,       // input value invalid
-    Overflow,           // arithmetic overflow
-    CooldownActive,     // update cooldown not elapsed
-    PayloadTooLarge,    // emitted payload or metadata exceeds configured bound
-    MetadataTooLong,    // metadata field length exceeded
+    Unauthorized, // caller not authorized
+    NotFound,        // requested entity not found
+    InvalidInput,    // input value invalid
+    Overflow,        // arithmetic overflow
+    CooldownActive,  // update cooldown not elapsed
+    PayloadTooLarge, // emitted payload or metadata exceeds configured bound
+    MetadataTooLong, // metadata field length exceeded
 
     /// ===========================================
     /// Confession module errors
     /// ===========================================
-    ConfessionExists,   // trying to create a duplicate confession
-    ConfessionEmpty,    // empty confession content
-    ConfessionTooLong,  // content exceeds max length
+    ConfessionExists, // trying to create a duplicate confession
+    ConfessionEmpty,   // empty confession content
+    ConfessionTooLong, // content exceeds max length
 
     /// ===========================================
     /// Reaction module errors
     /// ===========================================
-    ReactionExists,     // user already reacted
-    InvalidReactionType,// reaction type not recognized
+    ReactionExists, // user already reacted
+    InvalidReactionType, // reaction type not recognized
 
     /// ===========================================
     /// Report module errors
     /// ===========================================
-    ReportExists,       // user already reported
-    InvalidReportReason,// report reason not allowed
+    ReportExists, // user already reported
+    InvalidReportReason, // report reason not allowed
 
     /// ===========================================
     /// Governance module errors
@@ -42,7 +42,7 @@ pub enum ContractError {
     AlreadyApproved,
     AlreadyExecuted,
     InvalidAction,
-    ReportReasonTooLong,// report reason exceeds configured max
+    ReportReasonTooLong, // report reason exceeds configured max
 }
 
 impl ContractError {

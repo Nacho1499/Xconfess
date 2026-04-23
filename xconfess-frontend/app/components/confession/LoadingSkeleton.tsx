@@ -1,30 +1,35 @@
 export const SkeletonCard = () => (
-  <div role='status' aria-label='loading' className="bg-zinc-900 rounded-xl p-6 shadow-lg animate-pulse">
+  <div
+    role="status"
+    aria-label="loading"
+    className="luxury-panel animate-pulse rounded-[30px] p-6"
+  >
     {/* Author skeleton */}
-    <div className="flex items-center justify-between mb-4 pb-4 border-b border-zinc-800">
+    <div className="mb-4 flex items-center justify-between border-b border-[var(--border)] pb-4">
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-full bg-zinc-800" />
-        <div className="h-3 w-24 bg-zinc-800 rounded" />
+        <div className="h-10 w-10 rounded-full bg-[var(--skeleton)]" />
+        <div className="h-3 w-24 rounded bg-[var(--skeleton)]" />
       </div>
-      <div className="h-2 w-16 bg-zinc-800 rounded" />
+      <div className="h-2 w-16 rounded bg-[var(--skeleton)]" />
     </div>
 
     {/* Content skeleton */}
-    <div className="space-y-2 mb-4">
-      <div className="h-4 w-full bg-zinc-800 rounded" />
-      <div className="h-4 w-full bg-zinc-800 rounded" />
-      <div className="h-4 w-3/4 bg-zinc-800 rounded" />
+    <div className="mb-4 space-y-3">
+      <div className="h-4 w-24 rounded-full bg-[var(--accent-soft)]" />
+      <div className="h-6 w-full rounded bg-[var(--skeleton)]" />
+      <div className="h-6 w-full rounded bg-[var(--skeleton)]" />
+      <div className="h-6 w-3/4 rounded bg-[var(--skeleton)]" />
     </div>
 
     {/* Actions skeleton */}
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-3">
-        <div className="h-3 w-12 bg-zinc-800 rounded" />
-        <div className="h-3 w-12 bg-zinc-800 rounded" />
+        <div className="h-10 w-20 rounded-full bg-[var(--skeleton)]" />
+        <div className="h-10 w-20 rounded-full bg-[var(--skeleton)]" />
       </div>
       <div className="flex gap-2">
-        <div className="h-8 w-20 bg-zinc-800 rounded-full" />
-        <div className="h-8 w-20 bg-zinc-800 rounded-full" />
+        <div className="h-10 w-20 rounded-full bg-[var(--skeleton)]" />
+        <div className="h-10 w-20 rounded-full bg-[var(--skeleton)]" />
       </div>
     </div>
   </div>

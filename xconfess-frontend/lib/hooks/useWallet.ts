@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import * as WalletService from "../services/wallet.service";
+import { computeWalletReadiness } from "../wallet/walletReadiness";
 
 export interface WalletState {
   publicKey: string | null;
@@ -77,49 +78,6 @@ export const useWallet = (): UseWalletReturn => {
   }, []);
 
   /**
-   * Initialize wallet on mount
-   */
-  useEffect(() => {
-    if (!hasInitialized.current) {
-      hasInitialized.current = true;
-      initializeWallet();
-    }
-  }, [initializeWallet]);
-
-  /**
-   * Revalidate wallet connection on route changes
-   */
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-
-  useEffect(() => {
-    if (hasInitialized.current && state.publicKey) {
-      const revalidateConnection = async () => {
-        const walletInfo = await WalletService.getWalletInfo();
-        if (!walletInfo) {
-          setState((prev) => ({
-            ...prev,
-            publicKey: null,
-            isConnected: false,
-            error: "Wallet disconnected. Please reconnect.",
-          }));
-          clearSession();
-        } else if (walletInfo.publicKey !== state.publicKey) {
-          setState((prev) => ({
-            ...prev,
-            publicKey: walletInfo.publicKey,
-            network: walletInfo.network,
-            isConnected: true,
-            error: null,
-          }));
-          storeSession(walletInfo.publicKey, walletInfo.network);
-        }
-      };
-      revalidateConnection();
-    }
-  }, [pathname, searchParams, state.publicKey, clearSession, storeSession]);
-
-  /**
    * Initialize wallet state from storage and current wallet connection
    */
   const initializeWallet = useCallback(async () => {
@@ -184,6 +142,49 @@ export const useWallet = (): UseWalletReturn => {
       }));
     }
   }, [storeSession, getStoredSession]);
+
+  /**
+   * Initialize wallet on mount
+   */
+  useEffect(() => {
+    if (!hasInitialized.current) {
+      hasInitialized.current = true;
+      initializeWallet();
+    }
+  }, [initializeWallet]);
+
+  /**
+   * Revalidate wallet connection on route changes
+   */
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (hasInitialized.current && state.publicKey) {
+      const revalidateConnection = async () => {
+        const walletInfo = await WalletService.getWalletInfo();
+        if (!walletInfo) {
+          setState((prev) => ({
+            ...prev,
+            publicKey: null,
+            isConnected: false,
+            error: "Wallet disconnected. Please reconnect.",
+          }));
+          clearSession();
+        } else if (walletInfo.publicKey !== state.publicKey) {
+          setState((prev) => ({
+            ...prev,
+            publicKey: walletInfo.publicKey,
+            network: walletInfo.network,
+            isConnected: true,
+            error: null,
+          }));
+          storeSession(walletInfo.publicKey, walletInfo.network);
+        }
+      };
+      revalidateConnection();
+    }
+  }, [pathname, searchParams, state.publicKey, clearSession, storeSession]);
 
   /**
    * Connect to wallet
@@ -321,42 +322,11 @@ export const useWallet = (): UseWalletReturn => {
     }));
   }, []);
 
-  /**
-   * Compute wallet readiness state continuously based on current app configuration
-   */
-  const getReadinessState = () => {
-    if (!state.isConnected) return { isReady: false, readinessError: null };
-
-    const expected = process.env.NEXT_PUBLIC_STELLAR_NETWORK || "testnet";
-    const actual = (state.network || "").toUpperCase();
-
-    let isNetworkMatch = false;
-    if (expected === "mainnet") {
-      isNetworkMatch = ["PUBLIC", "PUBLIC_NETWORK", "MAINNET"].includes(actual);
-    } else {
-      isNetworkMatch = ["TESTNET", "TESTNET_SOROBAN"].includes(actual);
-    }
-
-    if (!isNetworkMatch) {
-      const displayExpected = expected === "mainnet" ? "Mainnet" : "Testnet";
-      return {
-        isReady: false,
-        readinessError: `Wallet on wrong network. Please switch to ${displayExpected}.`,
-      };
-    }
-
-    if (!state.publicKey) {
-      return {
-        isReady: false,
-        readinessError:
-          "Wallet signer is unavailable. Unlock Freighter and try again.",
-      };
-    }
-
-    return { isReady: true, readinessError: null };
-  };
-
-  const { isReady, readinessError } = getReadinessState();
+  const { isReady, readinessError } = computeWalletReadiness({
+    isConnected: state.isConnected,
+    publicKey: state.publicKey,
+    networkLabel: state.network,
+  });
 
   return {
     ...state,

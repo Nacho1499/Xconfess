@@ -1,10 +1,10 @@
 use soroban_sdk::{Env, String};
 
 use crate::emergency_pause::{
-    storage::DataKey,
+    admin::require_admin,
     errors::PauseError,
     events::{emit_paused, emit_unpaused},
-    admin::require_admin,
+    storage::DataKey,
 };
 
 pub fn is_paused(env: &Env) -> bool {
@@ -47,4 +47,10 @@ pub fn unpause(env: Env, reason: String) -> Result<(), PauseError> {
     emit_unpaused(&env, &actor, reason);
 
     Ok(())
+}
+
+/// Internal: Set paused state without admin authorization check.
+/// Used by governance module after quorum approval.
+pub fn set_paused_internal(env: &Env, paused: bool) {
+    env.storage().instance().set(&DataKey::Paused, &paused);
 }

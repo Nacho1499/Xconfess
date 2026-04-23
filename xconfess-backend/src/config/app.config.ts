@@ -11,7 +11,7 @@ export default registerAs('app', () => ({
   frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:3000',
   backendUrl: process.env.BACKEND_URL ?? '',
   appSecret: process.env.APP_SECRET ?? '',
-  confessionAesKey: process.env.CONFESSION_AES_KEY ?? '',
+  confessionEncryptionKey: process.env.CONFESSION_ENCRYPTION_KEY ?? '',
 
   /**
    * Search observability settings.
