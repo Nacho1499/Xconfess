@@ -86,6 +86,8 @@ pub enum Error {
     NotPaused = 10,
     Unauthorized = 11,
     ContractPaused = 12,
+    AlreadyOperator = 13,
+    NotOperator = 14,
 }
 
 impl From<access_control::AccessError> for Error {
@@ -99,6 +101,8 @@ impl From<access_control::AccessError> for Error {
             access_control::AccessError::CannotDemoteOwner => Self::CannotDemoteOwner,
             access_control::AccessError::CannotRevokeLastAdmin => Self::CannotRevokeLastAdmin,
             access_control::AccessError::InvalidOwnershipTransfer => Self::InvalidOwnershipTransfer,
+            access_control::AccessError::AlreadyOperator => Self::AlreadyOperator,
+            access_control::AccessError::NotOperator => Self::NotOperator,
         }
     }
 }
@@ -270,9 +274,19 @@ impl ConfessionAnchor {
         access_control::is_admin(&env, &address)
     }
 
+    /// Check if an address is an operator.
+    pub fn is_operator(env: Env, address: Address) -> bool {
+        access_control::is_operator(&env, &address)
+    }
+
     /// Get count of active admins (excluding the owner).
     pub fn get_admin_count(env: Env) -> u32 {
         access_control::count_admins(&env)
+    }
+
+    /// Get count of active operators.
+    pub fn get_operator_count(env: Env) -> u32 {
+        access_control::count_operators(&env)
     }
 
     /// Grant admin role to an address (owner-only).
@@ -290,21 +304,45 @@ impl ConfessionAnchor {
         access_control::transfer_ownership(&env, &caller, &new_owner).map_err(Into::into)
     }
 
+    /// Grant operator role to an address (owner or admin).
+    pub fn grant_operator(env: Env, caller: Address, target: Address) -> Result<(), Error> {
+        access_control::grant_operator(&env, &caller, &target).map_err(Into::into)
+    }
+
+    /// Revoke operator role from an address (owner or admin).
+    pub fn revoke_operator(env: Env, caller: Address, target: Address) -> Result<(), Error> {
+        access_control::revoke_operator(&env, &caller, &target).map_err(Into::into)
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Pause/Resume Management
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Pause the contract (owner-only). Blocks anchor_confession writes.
+    /// Pause the contract (owner/admin). Blocks anchor_confession writes.
     /// Read operations (verify, count) remain available.
     pub fn pause(env: Env, caller: Address, reason: String) -> Result<(), Error> {
-        access_control::require_owner(&env, &caller).map_err(Error::from)?;
-        emergency_pause::pause(env, reason).map_err(Into::into)
+        access_control::require_admin_or_owner(&env, &caller).map_err(Error::from)?;
+
+        if emergency_pause::is_paused(&env) {
+            return Err(Error::AlreadyPaused);
+        }
+
+        emergency_pause::set_paused_internal(&env, true);
+        emergency_pause::events::emit_paused(&env, &caller, reason);
+        Ok(())
     }
 
-    /// Unpause the contract (owner-only).
+    /// Unpause the contract (owner/admin).
     pub fn unpause(env: Env, caller: Address, reason: String) -> Result<(), Error> {
-        access_control::require_owner(&env, &caller).map_err(Error::from)?;
-        emergency_pause::unpause(env, reason).map_err(Into::into)
+        access_control::require_admin_or_owner(&env, &caller).map_err(Error::from)?;
+
+        if !emergency_pause::is_paused(&env) {
+            return Err(Error::NotPaused);
+        }
+
+        emergency_pause::set_paused_internal(&env, false);
+        emergency_pause::events::emit_unpaused(&env, &caller, reason);
+        Ok(())
     }
 
     /// Check if the contract is paused.
@@ -367,7 +405,7 @@ impl ConfessionAnchor {
 mod test {
     use super::*;
     use soroban_sdk::{
-        testutils::{Events, Ledger, LedgerInfo},
+        testutils::{Address as _, Events, Ledger, LedgerInfo},
         BytesN, Env, IntoVal, String as SorobanString,
     };
 
@@ -922,6 +960,85 @@ mod test {
         assert_eq!(
             client.get_error_registry_version(),
             errors::ERROR_REGISTRY_VERSION
+        );
+    }
+
+    // ── Group I: Role permission matrix ─────────────────────────────────────
+
+    #[test]
+    fn owner_admin_operator_permission_matrix_for_admin_actions() {
+        let (env, client) = new_client();
+        let owner = Address::generate(&env);
+        let admin = Address::generate(&env);
+        let operator = Address::generate(&env);
+        let outsider = Address::generate(&env);
+
+        client.initialize(&owner);
+
+        // Owner can grant admin; admin can grant operator.
+        client.grant_admin(&owner, &admin);
+        client.grant_operator(&admin, &operator);
+        assert!(client.is_admin(&admin));
+        assert!(client.is_operator(&operator));
+
+        // Owner-only: admin management and ownership transfer.
+        assert_eq!(
+            client.try_grant_admin(&admin, &outsider),
+            Err(Ok(Error::NotOwner))
+        );
+        assert_eq!(
+            client.try_transfer_owner(&admin, &outsider),
+            Err(Ok(Error::NotOwner))
+        );
+
+        // Owner/admin only: pause and unpause.
+        let pause_reason = SorobanString::from_str(&env, "maintenance");
+        client.pause(&admin, &pause_reason);
+        client.unpause(&owner, &pause_reason);
+
+        // Operator cannot execute owner/admin-only actions.
+        assert_eq!(
+            client.try_pause(&operator, &pause_reason),
+            Err(Ok(Error::NotAuthorized))
+        );
+        assert_eq!(
+            client.try_grant_operator(&operator, &outsider),
+            Err(Ok(Error::NotAuthorized))
+        );
+        assert_eq!(
+            client.try_revoke_admin(&operator, &admin),
+            Err(Ok(Error::NotOwner))
+        );
+
+        // Outsider cannot run privileged actions.
+        assert_eq!(
+            client.try_pause(&outsider, &pause_reason),
+            Err(Ok(Error::NotAuthorized))
+        );
+    }
+
+    #[test]
+    fn operator_role_requires_admin_or_owner_assignment() {
+        let (env, client) = new_client();
+        let owner = Address::generate(&env);
+        let outsider = Address::generate(&env);
+        let operator = Address::generate(&env);
+
+        client.initialize(&owner);
+
+        assert_eq!(
+            client.try_grant_operator(&outsider, &operator),
+            Err(Ok(Error::NotAuthorized))
+        );
+        client.grant_operator(&owner, &operator);
+        assert_eq!(
+            client.try_grant_operator(&owner, &operator),
+            Err(Ok(Error::AlreadyOperator))
+        );
+        client.revoke_operator(&owner, &operator);
+        assert_eq!(
+            client.try_revoke_operator(&owner, &operator),
+            Err(Ok(Error::NotOperator))
         );
     }
 }

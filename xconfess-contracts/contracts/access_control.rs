@@ -47,6 +47,15 @@ use soroban_sdk::{contractevent, contracttype, Address, Env, Map, String};
 pub enum AccessKey {
     Owner,
     Admins,
+    Operators,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Role {
+    Owner,
+    Admin,
+    Operator,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,6 +86,10 @@ pub enum AccessError {
     CannotRevokeLastAdmin = 7,
     /// Cannot transfer ownership to same address (code 8).
     InvalidOwnershipTransfer = 8,
+    /// Target address is already an operator (code 9).
+    AlreadyOperator = 9,
+    /// Target address is not an operator (cannot revoke) (code 10).
+    NotOperator = 10,
 }
 
 #[contractevent(topics = ["adm_grant"], data_format = "single-value")]
@@ -126,6 +139,9 @@ pub fn init_owner(env: &Env, owner: &Address) -> Result<(), AccessError> {
     let admins: Map<Address, ()> = Map::new(env);
     env.storage().instance().set(&AccessKey::Admins, &admins);
 
+    let operators: Map<Address, ()> = Map::new(env);
+    env.storage().instance().set(&AccessKey::Operators, &operators);
+
     Ok(())
 }
 
@@ -158,6 +174,25 @@ pub fn is_admin(env: &Env, addr: &Address) -> bool {
     admins.contains_key(addr.clone())
 }
 
+/// Returns `true` if `addr` is in the operator set.
+pub fn is_operator(env: &Env, addr: &Address) -> bool {
+    let operators: Map<Address, ()> = env
+        .storage()
+        .instance()
+        .get(&AccessKey::Operators)
+        .unwrap_or_else(|| Map::new(env));
+    operators.contains_key(addr.clone())
+}
+
+/// Return true when `addr` has the requested role.
+pub fn has_role(env: &Env, addr: &Address, role: Role) -> Result<bool, AccessError> {
+    match role {
+        Role::Owner => is_owner(env, addr),
+        Role::Admin => Ok(is_admin(env, addr)),
+        Role::Operator => Ok(is_operator(env, addr)),
+    }
+}
+
 /// Returns `true` if `addr` is the owner OR is an explicit admin.
 /// Use this as the guard predicate for moderation-level actions (e.g. `resolve`).
 pub fn is_authorized(env: &Env, addr: &Address) -> Result<bool, AccessError> {
@@ -173,6 +208,16 @@ pub fn count_admins(env: &Env) -> u32 {
         .get(&AccessKey::Admins)
         .unwrap_or_else(|| Map::new(env));
     admins.len()
+}
+
+/// Returns the total number of active operators.
+pub fn count_operators(env: &Env) -> u32 {
+    let operators: Map<Address, ()> = env
+        .storage()
+        .instance()
+        .get(&AccessKey::Operators)
+        .unwrap_or_else(|| Map::new(env));
+    operators.len()
 }
 
 /// Returns the total number of authorized addresses (owner + admins).
@@ -209,6 +254,17 @@ pub fn require_admin_or_owner(env: &Env, caller: &Address) -> Result<(), AccessE
     }
 
     Ok(())
+}
+
+/// Require owner OR admin OR operator role for operational routines.
+pub fn require_operator_or_admin_or_owner(env: &Env, caller: &Address) -> Result<(), AccessError> {
+    caller.require_auth();
+
+    if is_owner(env, caller)? || is_admin(env, caller) || is_operator(env, caller) {
+        return Ok(());
+    }
+
+    Err(AccessError::NotAuthorized)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -335,6 +391,48 @@ pub fn internal_transfer_ownership(env: &Env, new_owner: &Address) -> Result<(),
         previous_owner: old_owner,
     }
     .publish(env);
+
+    Ok(())
+}
+
+/// Grant `target` the operator role.
+/// Caller must be owner or admin.
+pub fn grant_operator(env: &Env, caller: &Address, target: &Address) -> Result<(), AccessError> {
+    require_admin_or_owner(env, caller)?;
+
+    if is_operator(env, target) {
+        return Err(AccessError::AlreadyOperator);
+    }
+
+    let mut operators: Map<Address, ()> = env
+        .storage()
+        .instance()
+        .get(&AccessKey::Operators)
+        .unwrap_or_else(|| Map::new(env));
+
+    operators.set(target.clone(), ());
+    env.storage().instance().set(&AccessKey::Operators, &operators);
+
+    Ok(())
+}
+
+/// Revoke `target`'s operator role.
+/// Caller must be owner or admin.
+pub fn revoke_operator(env: &Env, caller: &Address, target: &Address) -> Result<(), AccessError> {
+    require_admin_or_owner(env, caller)?;
+
+    if !is_operator(env, target) {
+        return Err(AccessError::NotOperator);
+    }
+
+    let mut operators: Map<Address, ()> = env
+        .storage()
+        .instance()
+        .get(&AccessKey::Operators)
+        .unwrap_or_else(|| Map::new(env));
+
+    operators.remove(target.clone());
+    env.storage().instance().set(&AccessKey::Operators, &operators);
 
     Ok(())
 }
