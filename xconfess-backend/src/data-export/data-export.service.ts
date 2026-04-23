@@ -162,19 +162,30 @@ export class DataExportService {
     });
   }
 
-  generateSignedDownloadUrl(
+  async generateSignedDownloadUrl(
     requestId: string,
     userId: string,
     chunkIndex?: number,
-  ): string {
-    const expires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours from now
+  ): Promise<string> {
+    const ttlMs = this.configService.get<number>(
+      'app.exportDownloadTtlMs',
+      24 * 60 * 60 * 1000,
+    );
+    const expires = Date.now() + ttlMs;
     const secret = this.configService.get<string>('app.appSecret', '');
 
-    // Create a hash of the payload
+    // For single-file downloads generate and persist a one-time nonce so the
+    // link cannot be replayed after the first successful download.
+    let token: string | undefined;
+    if (chunkIndex === undefined) {
+      token = crypto.randomBytes(16).toString('hex');
+      await this.exportRepository.update(requestId, { downloadToken: token });
+    }
+
     const dataToSign =
       chunkIndex !== undefined
         ? `${requestId}:${userId}:${chunkIndex}:${expires}`
-        : `${requestId}:${userId}:${expires}`;
+        : `${requestId}:${userId}:${expires}:${token}`;
 
     const signature = crypto
       .createHmac('sha256', secret || 'APP_SECRET_NOT_SET')
@@ -197,7 +208,38 @@ export class DataExportService {
       .catch(() => undefined);
 
     const chunkParam = chunkIndex !== undefined ? `&chunk=${chunkIndex}` : '';
-    return `${baseUrl}/api/data-export/download/${requestId}?userId=${userId}&expires=${expires}&signature=${signature}${chunkParam}`;
+    const tokenParam = token !== undefined ? `&token=${token}` : '';
+    return `${baseUrl}/api/data-export/download/${requestId}?userId=${userId}&expires=${expires}&signature=${signature}${chunkParam}${tokenParam}`;
+  }
+
+  /**
+   * Invalidates the current download token after a successful download.
+   * Subsequent requests with the same token will be rejected.
+   */
+  async invalidateDownloadToken(requestId: string): Promise<void> {
+    await this.exportRepository.update(requestId, {
+      downloadToken: null,
+      downloadedAt: new Date(),
+    });
+  }
+
+  /**
+   * Validates that the supplied token matches the stored one-time nonce and,
+   * if so, atomically consumes it to prevent replay.
+   * Returns false if the token is missing, expired, or already used.
+   */
+  async validateAndConsumeToken(
+    requestId: string,
+    userId: string,
+    token: string,
+  ): Promise<boolean> {
+    const record = await this.exportRepository.findOne({
+      where: { id: requestId, userId },
+      select: ['downloadToken'] as any,
+    });
+    if (!record || record.downloadToken !== token) return false;
+    await this.invalidateDownloadToken(requestId);
+    return true;
   }
 
   async getExportFile(requestId: string, userId: string) {
@@ -273,17 +315,26 @@ export class DataExportService {
   }
 
   private getExpiryTimestamp(createdAt: Date): number {
-    return new Date(createdAt).getTime() + 24 * 60 * 60 * 1000;
+    const ttlMs = this.configService.get<number>(
+      'app.exportDownloadTtlMs',
+      24 * 60 * 60 * 1000,
+    );
+    return new Date(createdAt).getTime() + ttlMs;
   }
 
-  private isDownloadStillValid(
+  /** True when the underlying export file is still within its TTL window. */
+  private isFileAvailable(
     request: Pick<ExportRequest, 'status' | 'createdAt'>,
   ): boolean {
-    if (request.status !== 'READY') {
-      return false;
-    }
-
+    if (request.status !== 'READY') return false;
     return Date.now() <= this.getExpiryTimestamp(request.createdAt);
+  }
+
+  /** True when a valid one-time token exists and the file is still available. */
+  private hasActiveToken(
+    request: Pick<ExportRequest, 'status' | 'createdAt' | 'downloadToken'>,
+  ): boolean {
+    return this.isFileAvailable(request) && request.downloadToken !== null;
   }
 
   private buildProgress(request: Partial<ExportRequest>): ExportProgress {
@@ -298,7 +349,7 @@ export class DataExportService {
     };
   }
 
-  private toHistoryItem(
+  private async toHistoryItem(
     request: Pick<
       ExportRequest,
       | 'id'
@@ -312,15 +363,17 @@ export class DataExportService {
       | 'expiredAt'
       | 'retryCount'
       | 'lastFailureReason'
+      | 'downloadToken'
     >,
-  ): ExportHistoryItem {
+  ): Promise<ExportHistoryItem> {
     const expiresAt =
       request.status === 'READY'
         ? this.getExpiryTimestamp(request.createdAt)
         : null;
-    const canRedownload = this.isDownloadStillValid(request);
+    const fileAvailable = this.isFileAvailable(request);
+    const canRedownload = this.hasActiveToken(request);
     const normalizedStatus: ExportHistoryStatus =
-      request.status === 'READY' && !canRedownload
+      request.status === 'READY' && !fileAvailable
         ? 'EXPIRED'
         : (request.status as ExportHistoryStatus);
 
@@ -330,9 +383,10 @@ export class DataExportService {
       createdAt: request.createdAt,
       expiresAt,
       canRedownload,
-      canRequestNewLink: normalizedStatus === 'EXPIRED',
+      // Allow regeneration when the file is still available but the token was consumed.
+      canRequestNewLink: fileAvailable && !canRedownload,
       downloadUrl: canRedownload
-        ? this.generateSignedDownloadUrl(request.id, request.userId)
+        ? await this.generateSignedDownloadUrl(request.id, request.userId)
         : null,
       progress: this.buildProgress(request),
     };
@@ -351,6 +405,7 @@ export class DataExportService {
     'expiredAt',
     'retryCount',
     'lastFailureReason',
+    'downloadToken',
   ] as const;
 
   async getExportHistory(
@@ -364,7 +419,7 @@ export class DataExportService {
       select: this.lifecycleSelect as any,
     });
 
-    return requests.map((request) => this.toHistoryItem(request));
+    return Promise.all(requests.map((request) => this.toHistoryItem(request)));
   }
 
   async getLatestExport(userId: string): Promise<ExportHistoryItem | null> {
@@ -386,14 +441,17 @@ export class DataExportService {
       select: this.lifecycleSelect as any,
     });
 
-    if (!request || !this.isDownloadStillValid(request)) {
+    if (!request || !this.isFileAvailable(request)) {
       throw new BadRequestException(
         'Secure download link is no longer available. Request a new export.',
       );
     }
 
     return {
-      downloadUrl: this.generateSignedDownloadUrl(request.id, request.userId),
+      downloadUrl: await this.generateSignedDownloadUrl(
+        request.id,
+        request.userId,
+      ),
     };
   }
 
