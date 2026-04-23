@@ -25,6 +25,8 @@ describe('DataExportController', () => {
       getExportFile: jest.fn(),
       getExportChunk: jest.fn(),
       generateSignedDownloadUrl: jest.fn(),
+      validateAndConsumeToken: jest.fn().mockResolvedValue(true),
+      invalidateDownloadToken: jest.fn(),
     } as any;
 
     mockConfigService = {
@@ -58,18 +60,50 @@ describe('DataExportController', () => {
 
   // ── Download Endpoint Security Tests ────────────────────────────────────────
 
+  // Helper: build a valid signed token + signature for single-file downloads.
+  function buildSingleFileParams(
+    requestId: string,
+    userId: string,
+    expiresMs: number,
+    token: string,
+    secret = 'test-secret',
+  ) {
+    const dataToSign = `${requestId}:${userId}:${expiresMs}:${token}`;
+    const signature = crypto
+      .createHmac('sha256', secret)
+      .update(dataToSign)
+      .digest('hex');
+    return { signature, token };
+  }
+
+  // Helper: build a valid signed signature for chunked downloads.
+  function buildChunkParams(
+    requestId: string,
+    userId: string,
+    chunkIndex: number,
+    expiresMs: number,
+    secret = 'test-secret',
+  ) {
+    const dataToSign = `${requestId}:${userId}:${chunkIndex}:${expiresMs}`;
+    const signature = crypto
+      .createHmac('sha256', secret)
+      .update(dataToSign)
+      .digest('hex');
+    return { signature };
+  }
+
   describe('Download Endpoint Security', () => {
     it('should reject download requests with expired timestamps', async () => {
       const expiredTime = Date.now() - 25 * 60 * 60 * 1000; // 25 hours ago
       const requestId = 'req-1';
       const userId = 'user-1';
-
-      // Generate valid signature for expired time
-      const dataToSign = `${requestId}:${userId}:${expiredTime}`;
-      const signature = crypto
-        .createHmac('sha256', 'test-secret')
-        .update(dataToSign)
-        .digest('hex');
+      const token = 'sometoken';
+      const { signature } = buildSingleFileParams(
+        requestId,
+        userId,
+        expiredTime,
+        token,
+      );
 
       await expect(
         controller.download(
@@ -78,13 +112,14 @@ describe('DataExportController', () => {
           expiredTime.toString(),
           signature,
           undefined,
+          token,
           {} as any,
         ),
       ).rejects.toThrow(UnauthorizedException);
     });
 
     it('should reject download requests with invalid signatures', async () => {
-      const futureTime = Date.now() + 60 * 60 * 1000; // 1 hour from now
+      const futureTime = Date.now() + 60 * 60 * 1000;
       const requestId = 'req-1';
       const userId = 'user-1';
       const invalidSignature = 'invalid-signature';
@@ -96,6 +131,7 @@ describe('DataExportController', () => {
           futureTime.toString(),
           invalidSignature,
           undefined,
+          'any-token',
           {} as any,
         ),
       ).rejects.toThrow(UnauthorizedException);
@@ -104,33 +140,123 @@ describe('DataExportController', () => {
     it('should reject download requests with malformed timestamps', async () => {
       const requestId = 'req-1';
       const userId = 'user-1';
-      const malformedTime = 'not-a-number';
-      const signature = 'any-signature';
 
       await expect(
         controller.download(
           requestId,
           userId,
-          malformedTime,
+          'not-a-number',
+          'any-signature',
+          undefined,
+          'any-token',
+          {} as any,
+        ),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should reject single-file download when token is missing', async () => {
+      const futureTime = Date.now() + 60 * 60 * 1000;
+      const requestId = 'req-1';
+      const userId = 'user-1';
+      const token = 'valid-token';
+      const { signature } = buildSingleFileParams(
+        requestId,
+        userId,
+        futureTime,
+        token,
+      );
+
+      // Pass undefined token — should reject even with a valid signature.
+      await expect(
+        controller.download(
+          requestId,
+          userId,
+          futureTime.toString(),
           signature,
+          undefined,
           undefined,
           {} as any,
         ),
       ).rejects.toThrow(UnauthorizedException);
     });
 
+    it('should reject replayed single-file download after token consumed', async () => {
+      const futureTime = Date.now() + 60 * 60 * 1000;
+      const requestId = 'req-1';
+      const userId = 'user-1';
+      const token = 'used-token';
+      const { signature } = buildSingleFileParams(
+        requestId,
+        userId,
+        futureTime,
+        token,
+      );
+
+      // Simulate token already consumed.
+      mockExportService.validateAndConsumeToken.mockResolvedValue(false);
+
+      await expect(
+        controller.download(
+          requestId,
+          userId,
+          futureTime.toString(),
+          signature,
+          undefined,
+          token,
+          {} as any,
+        ),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should consume the token on first successful single-file download', async () => {
+      const futureTime = Date.now() + 60 * 60 * 1000;
+      const requestId = 'req-1';
+      const userId = 'user-1';
+      const token = 'fresh-token';
+      const { signature } = buildSingleFileParams(
+        requestId,
+        userId,
+        futureTime,
+        token,
+      );
+
+      mockExportService.validateAndConsumeToken.mockResolvedValue(true);
+      mockExportService.getExportFile.mockResolvedValue({
+        fileData: Buffer.from('zip content'),
+        isChunked: false,
+      } as any);
+
+      const mockRes = { set: jest.fn(), send: jest.fn() } as any;
+
+      await controller.download(
+        requestId,
+        userId,
+        futureTime.toString(),
+        signature,
+        undefined,
+        token,
+        mockRes,
+      );
+
+      expect(mockExportService.validateAndConsumeToken).toHaveBeenCalledWith(
+        requestId,
+        userId,
+        token,
+      );
+      expect(mockRes.send).toHaveBeenCalled();
+    });
+
     it('should handle chunked download signature validation', async () => {
-      const futureTime = Date.now() + 60 * 60 * 1000; // 1 hour from now
+      const futureTime = Date.now() + 60 * 60 * 1000;
       const requestId = 'req-1';
       const userId = 'user-1';
       const chunkIndex = '2';
-
-      // Generate valid signature
-      const dataToSign = `${requestId}:${userId}:${chunkIndex}:${futureTime}`;
-      const signature = crypto
-        .createHmac('sha256', 'test-secret')
-        .update(dataToSign)
-        .digest('hex');
+      const { signature } = buildChunkParams(
+        requestId,
+        userId,
+        2,
+        futureTime,
+      );
 
       const mockChunk = {
         fileData: Buffer.from('chunk data'),
@@ -140,10 +266,7 @@ describe('DataExportController', () => {
 
       mockExportService.getExportChunk.mockResolvedValue(mockChunk as any);
 
-      const mockRes = {
-        set: jest.fn(),
-        send: jest.fn(),
-      } as any;
+      const mockRes = { set: jest.fn(), send: jest.fn() } as any;
 
       await controller.download(
         requestId,
@@ -151,6 +274,7 @@ describe('DataExportController', () => {
         futureTime.toString(),
         signature,
         chunkIndex,
+        undefined,
         mockRes,
       );
 
@@ -173,11 +297,10 @@ describe('DataExportController', () => {
       const userId = 'user-1';
       const chunkIndex = '2';
 
-      // Generate signature without chunk (invalid for chunked request)
-      const dataToSign = `${requestId}:${userId}:${futureTime}`;
-      const signature = crypto
+      // Signature built without chunk index — invalid for a chunked request.
+      const badSig = crypto
         .createHmac('sha256', 'test-secret')
-        .update(dataToSign)
+        .update(`${requestId}:${userId}:${futureTime}`)
         .digest('hex');
 
       await expect(
@@ -185,8 +308,9 @@ describe('DataExportController', () => {
           requestId,
           userId,
           futureTime.toString(),
-          signature,
+          badSig,
           chunkIndex,
+          undefined,
           {} as any,
         ),
       ).rejects.toThrow(UnauthorizedException);
@@ -196,12 +320,13 @@ describe('DataExportController', () => {
       const futureTime = Date.now() + 60 * 60 * 1000;
       const requestId = 'req-1';
       const userId = 'user-1';
-
-      const dataToSign = `${requestId}:${userId}:${futureTime}`;
-      const signature = crypto
-        .createHmac('sha256', 'test-secret')
-        .update(dataToSign)
-        .digest('hex');
+      const token = 'tok';
+      const { signature } = buildSingleFileParams(
+        requestId,
+        userId,
+        futureTime,
+        token,
+      );
 
       const mockChunkedExport = {
         fileData: null,
@@ -215,19 +340,17 @@ describe('DataExportController', () => {
         mockChunkedExport as any,
       );
       mockExportService.generateSignedDownloadUrl
-        .mockReturnValueOnce(
+        .mockResolvedValueOnce(
           'https://backend.example.com/api/data-export/download/req-1?userId=user-1&expires=123&signature=abc&chunk=0',
         )
-        .mockReturnValueOnce(
+        .mockResolvedValueOnce(
           'https://backend.example.com/api/data-export/download/req-1?userId=user-1&expires=123&signature=def&chunk=1',
         )
-        .mockReturnValueOnce(
+        .mockResolvedValueOnce(
           'https://backend.example.com/api/data-export/download/req-1?userId=user-1&expires=123&signature=ghi&chunk=2',
         );
 
-      const mockRes = {
-        json: jest.fn(),
-      } as any;
+      const mockRes = { json: jest.fn() } as any;
 
       await controller.download(
         requestId,
@@ -235,6 +358,7 @@ describe('DataExportController', () => {
         futureTime.toString(),
         signature,
         undefined,
+        token,
         mockRes,
       );
 
@@ -255,12 +379,13 @@ describe('DataExportController', () => {
       const futureTime = Date.now() + 60 * 60 * 1000;
       const requestId = 'req-1';
       const userId = 'user-1';
-
-      const dataToSign = `${requestId}:${userId}:${futureTime}`;
-      const signature = crypto
-        .createHmac('sha256', 'test-secret')
-        .update(dataToSign)
-        .digest('hex');
+      const token = 'tok';
+      const { signature } = buildSingleFileParams(
+        requestId,
+        userId,
+        futureTime,
+        token,
+      );
 
       mockExportService.getExportFile.mockResolvedValue(null);
 
@@ -271,6 +396,7 @@ describe('DataExportController', () => {
           futureTime.toString(),
           signature,
           undefined,
+          token,
           {} as any,
         ),
       ).rejects.toThrow(BadRequestException);
