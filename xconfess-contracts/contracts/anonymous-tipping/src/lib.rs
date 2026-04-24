@@ -5,8 +5,31 @@ use soroban_sdk::{
     String as SorobanString,
 };
 
+/// Backend-facing stable error codes for tipping contract
+/// These codes are exposed via Error::code() and must remain stable for consumer compatibility
+pub mod codes {
+    pub const INVALID_TIP_AMOUNT: u32 = 6001;
+    pub const METADATA_TOO_LONG: u32 = 6002;
+    pub const TOTAL_OVERFLOW: u32 = 6003;
+    pub const NONCE_OVERFLOW: u32 = 6004;
+    pub const UNAUTHORIZED: u32 = 6005;
+    pub const CONTRACT_PAUSED: u32 = 6006;
+    pub const RATE_LIMITED: u32 = 6007;
+    pub const INVALID_RATE_LIMIT_CONFIG: u32 = 6008;
+}
+
+/// Error classification for backend retry strategy
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ErrorClassification {
+    Terminal,   // Invalid input, auth failure — do not retry
+    Retryable,  // Transient (pause, rate limit) — may retry with backoff
+    Unknown,    // Treat as terminal, log for investigation
+}
+
 const EVENT_VERSION_V1: u32 = 1;
 
+/// Typed error enum for the Anonymous Tipping contract
+/// Each error has a stable backend-facing code (60xx series)
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum Error {
@@ -18,6 +41,56 @@ pub enum Error {
     ContractPaused = 6,
     RateLimited = 7,
     InvalidRateLimitConfig = 8,
+}
+
+impl Error {
+    /// Get stable backend-facing error code for this error.
+    /// These codes are used by off-chain services and must remain stable.
+    pub fn code(&self) -> u32 {
+        match self {
+            Error::InvalidTipAmount => codes::INVALID_TIP_AMOUNT,
+            Error::MetadataTooLong => codes::METADATA_TOO_LONG,
+            Error::TotalOverflow => codes::TOTAL_OVERFLOW,
+            Error::NonceOverflow => codes::NONCE_OVERFLOW,
+            Error::Unauthorized => codes::UNAUTHORIZED,
+            Error::ContractPaused => codes::CONTRACT_PAUSED,
+            Error::RateLimited => codes::RATE_LIMITED,
+            Error::InvalidRateLimitConfig => codes::INVALID_RATE_LIMIT_CONFIG,
+        }
+    }
+
+    /// Human-readable message for this error
+    pub fn message(&self) -> &'static str {
+        match self {
+            Error::InvalidTipAmount => "tip amount must be positive",
+            Error::MetadataTooLong => "proof metadata too long",
+            Error::TotalOverflow => "recipient total would overflow",
+            Error::NonceOverflow => "settlement nonce would overflow",
+            Error::Unauthorized => "caller not authorized",
+            Error::ContractPaused => "contract is paused",
+            Error::RateLimited => "rate limit exceeded",
+            Error::InvalidRateLimitConfig => "invalid rate limit configuration",
+        }
+    }
+
+    /// Classify error for backend retry strategy
+    pub fn classification(&self) -> ErrorClassification {
+        match self {
+            // Terminal: caller's responsibility to fix
+            Error::InvalidTipAmount => ErrorClassification::Terminal,
+            Error::MetadataTooLong => ErrorClassification::Terminal,
+            Error::Unauthorized => ErrorClassification::Terminal,
+            Error::InvalidRateLimitConfig => ErrorClassification::Terminal,
+
+            // Retryable: transient state (pause, rate limit) may resolve
+            Error::ContractPaused => ErrorClassification::Retryable,
+            Error::RateLimited => ErrorClassification::Retryable,
+
+            // Retryable: arithmetic overflow on recipient balance
+            Error::TotalOverflow => ErrorClassification::Retryable,
+            Error::NonceOverflow => ErrorClassification::Retryable,
+        }
+    }
 }
 
 #[contract]
