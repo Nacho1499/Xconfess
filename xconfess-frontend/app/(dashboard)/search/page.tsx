@@ -147,7 +147,7 @@ export default function SearchPage() {
   const updateUrl = useCallback((q: string, f: SearchFilters) => {
     const params = filtersToSearchParams(f, q);
     const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
-    router.replace(newUrl, { scroll: false });
+    router.push(newUrl, { scroll: false });
   }, [pathname, router]);
 
   const handleSubmit = useCallback((q: string) => {
