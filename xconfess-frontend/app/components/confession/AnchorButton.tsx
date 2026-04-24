@@ -58,6 +58,7 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
   };
 
   const handleAnchor = async () => {
+    if (isAnchoring || isLoading) return;
     setError(null);
 
     if (!isConnected) {
