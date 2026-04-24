@@ -1,7 +1,7 @@
 use soroban_sdk::{Env, String};
 
 use crate::emergency_pause::{
-    admin::require_admin,
+    admin::require_pause_authority,
     errors::PauseError,
     events::{emit_paused, emit_unpaused},
     storage::DataKey,
@@ -21,8 +21,8 @@ pub fn assert_not_paused(env: &Env) -> Result<(), PauseError> {
     Ok(())
 }
 
-pub fn pause(env: Env, reason: String) -> Result<(), PauseError> {
-    let actor = require_admin(&env)?;
+pub fn pause(env: Env, caller: soroban_sdk::Address, reason: String) -> Result<(), PauseError> {
+    let actor = require_pause_authority(&env, &caller)?;
 
     if is_paused(&env) {
         return Err(PauseError::AlreadyPaused);
@@ -35,8 +35,8 @@ pub fn pause(env: Env, reason: String) -> Result<(), PauseError> {
     Ok(())
 }
 
-pub fn unpause(env: Env, reason: String) -> Result<(), PauseError> {
-    let actor = require_admin(&env)?;
+pub fn unpause(env: Env, caller: soroban_sdk::Address, reason: String) -> Result<(), PauseError> {
+    let actor = require_pause_authority(&env, &caller)?;
 
     if !is_paused(&env) {
         return Err(PauseError::NotPaused);
