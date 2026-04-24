@@ -19,6 +19,12 @@ import {
 import { EmailService } from '../email/email.service';
 import { CryptoUtil } from '../common/crypto.util';
 import { maskUserId } from '../utils/mask-user-id';
+import {
+  ActivityType,
+  PaginatedUserActivityDto,
+} from './dto/user-activity.dto';
+import { decryptConfession } from '../utils/confession-encryption';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class UserService {
@@ -29,11 +35,16 @@ export class UserService {
     private userRepository: Repository<User>,
     @Inject(forwardRef(() => EmailService))
     private emailService: EmailService,
+    private readonly configService: ConfigService,
   ) {}
 
   // =========================
   // BASIC USER METHODS
   // =========================
+
+  private get aesKey(): string {
+    return this.configService.get<string>('app.confessionAesKey', '');
+  }
 
   async findByEmail(email: string): Promise<User | null> {
     try {
@@ -349,56 +360,124 @@ export class UserService {
     userId: number,
     page: number,
     limit: number,
-  ): Promise<{ data: any[]; meta: any }> {
+  ): Promise<PaginatedUserActivityDto> {
     const user = await this.findById(userId);
     if (!user) {
       return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
     }
 
-    const skip = (page - 1) * limit;
+    const offset = (page - 1) * limit;
 
-    const [confessions, totalConfessions] = await this.userRepository.manager
-      .getRepository('AnonymousConfession')
-      .createQueryBuilder('confession')
-      .leftJoin('confession.anonymousUser', 'au')
-      .leftJoin('au.userLinks', 'ul')
-      .where('ul.userId = :userId', { userId })
-      .andWhere('confession.isDeleted = false')
-      .andWhere('confession.isHidden = false')
-      .orderBy('confession.created_at', 'DESC')
-      .skip(skip)
-      .take(limit)
-      .getManyAndCount();
+    try {
+      // Use raw SQL for efficient multi-table aggregation via UNION ALL
+      const rawData = await this.userRepository.manager.query(
+        `
+      SELECT * FROM (
+        -- Confessions
+        SELECT 
+          c.id::text as id, 
+          '${ActivityType.CONFESSION}' as type, 
+          c.message as content, 
+          json_build_object('isAnchored', c.is_anchored, 'stellarTxHash', c.stellar_tx_hash) as metadata, 
+          c.created_at as "createdAt"
+        FROM anonymous_confessions c
+        JOIN user_anonymous_users ul ON c.anonymous_user_id = ul.anonymous_user_id
+        WHERE ul.user_id = $1 AND c."isDeleted" = false AND c.is_hidden = false
 
-    const decryptedConfessions = confessions.map((confession: any) => {
-      if (confession.message) {
-        try {
-          const { CryptoUtil } = require('../common/crypto.util');
-          confession.message = CryptoUtil.decrypt(
-            confession.message,
-            confession.messageIv,
-            confession.messageTag,
-          );
-        } catch {
-          confession.message = '[Encrypted]';
+        UNION ALL
+
+        -- Comments
+        SELECT 
+          com.id::text as id, 
+          '${ActivityType.COMMENT}' as type, 
+          com.content as content, 
+          json_build_object('confessionId', com."confessionId") as metadata, 
+          com."createdAt" as "createdAt"
+        FROM comments com
+        JOIN user_anonymous_users ul ON com.anonymous_user_id = ul.anonymous_user_id
+        WHERE ul.user_id = $1 AND com."isDeleted" = false
+
+        UNION ALL
+
+        -- Reactions
+        SELECT 
+          r.id::text as id, 
+          '${ActivityType.REACTION}' as type, 
+          NULL as content, 
+          json_build_object('emoji', r.emoji, 'confessionId', r.confession_id) as metadata, 
+          r.created_at as "createdAt"
+        FROM reaction r
+        JOIN user_anonymous_users ul ON r.anonymous_user_id = ul.anonymous_user_id
+        WHERE ul.user_id = $1
+
+        UNION ALL
+
+        -- Reports
+        SELECT 
+          rep.id::text as id, 
+          '${ActivityType.REPORT}' as type, 
+          rep.details as content, 
+          json_build_object('reason', rep.reason, 'status', rep.status, 'confessionId', rep."confessionId") as metadata, 
+          rep.created_at as "createdAt"
+        FROM reports rep
+        WHERE rep."reporterId" = $1
+      ) activity
+        ORDER BY "createdAt" DESC
+        LIMIT $2 OFFSET $3
+        `,
+        [userId, limit, offset],
+      );
+
+      const countResult = await this.userRepository.manager.query(
+        `
+        SELECT COUNT(*) as total FROM (
+          SELECT 1 FROM anonymous_confessions c JOIN user_anonymous_users ul ON c.anonymous_user_id = ul.anonymous_user_id WHERE ul.user_id = $1 AND c."isDeleted" = false AND c.is_hidden = false
+          UNION ALL
+          SELECT 1 FROM comments com JOIN user_anonymous_users ul ON com.anonymous_user_id = ul.anonymous_user_id WHERE ul.user_id = $1 AND com."isDeleted" = false
+          UNION ALL
+          SELECT 1 FROM reaction r JOIN user_anonymous_users ul ON r.anonymous_user_id = ul.anonymous_user_id WHERE ul.user_id = $1
+          UNION ALL
+          SELECT 1 FROM reports rep WHERE rep."reporterId" = $1
+        ) activity
+        `,
+        [userId],
+      );
+
+      const total = parseInt(countResult[0].total, 10);
+
+      const activities = rawData.map((activity: any) => {
+        let content = activity.content;
+
+        // Decrypt confessions if owner
+        if (activity.type === ActivityType.CONFESSION && content) {
+          try {
+            content = decryptConfession(content, this.aesKey);
+          } catch (e) {
+            content = '[Encrypted Content]';
+          }
         }
-      }
-      return {
-        type: 'confession',
-        id: confession.id,
-        content: confession.message,
-        createdAt: confession.created_at,
-      };
-    });
 
-    return {
-      data: decryptedConfessions,
-      meta: {
-        total: totalConfessions,
-        page,
-        limit,
-        totalPages: Math.ceil(totalConfessions / limit),
-      },
-    };
+        return {
+          id: activity.id,
+          type: activity.type as ActivityType,
+          content: content,
+          metadata: activity.metadata,
+          createdAt: activity.createdAt,
+        };
+      });
+
+      return {
+        data: activities,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
+    } catch (error) {
+      this.logger.error(`Failed to aggregate user activity: ${error.message}`, error.stack);
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+    }
   }
 }

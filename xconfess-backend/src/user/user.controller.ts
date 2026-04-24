@@ -13,6 +13,7 @@ import {
   Patch,
   Req,
   Param,
+  Query,
   NotFoundException,
 } from '@nestjs/common';
 import { UserService } from './user.service';
@@ -29,6 +30,8 @@ import {
   UpdatePrivacySettingsDto,
   PrivacySettingsResponseDto,
 } from './dto/update-privacy-settings.dto';
+import { ApiOperation, ApiResponse, ApiTags, ApiQuery } from '@nestjs/swagger';
+import { PaginatedUserActivityDto } from './dto/user-activity.dto';
 
 /**
  * Public user response contract.
@@ -321,11 +324,20 @@ export class UserController {
   }
 
   @Get(':id/activities')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get real-time user activity feed' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiResponse({
+    status: 200,
+    description: 'Aggregated user activity retrieved successfully',
+    type: PaginatedUserActivityDto,
+  })
   async getUserActivities(
     @Param('id') id: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
-  ): Promise<{ data: any[]; meta: any }> {
+  ): Promise<PaginatedUserActivityDto> {
     try {
       const userId = parseInt(id, 10);
       if (isNaN(userId)) {
