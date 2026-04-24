@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApi, User } from '@/app/lib/api/admin';
+import { queryKeys } from '@/app/lib/api/queryKeys';
 import { ConfirmDialog } from '@/app/components/admin/ConfirmDialog';
 import { useGlobalToast } from '@/app/components/common/Toast';
 
@@ -20,7 +21,7 @@ export default function UserManagement() {
   const toast = useGlobalToast();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-users-search', searchQuery, page],
+    queryKey: queryKeys.admin.users.search(searchQuery, page),
     queryFn: () => adminApi.searchUsers(searchQuery, limit, (page - 1) * limit),
     enabled: searchQuery.length > 0,
   });
@@ -29,7 +30,7 @@ export default function UserManagement() {
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       adminApi.banUser(id, reason),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users-search'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.users.all() });
       setSelectedUser(null);
       toast.success('User banned.', {
         action: {
@@ -46,7 +47,7 @@ export default function UserManagement() {
   const unbanMutation = useMutation({
     mutationFn: (id: string) => adminApi.unbanUser(id),
     onSuccess: (_, id) => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users-search'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.users.all() });
       setSelectedUser(null);
       toast.success('User unbanned.', {
         action: {
@@ -265,7 +266,7 @@ export default function UserManagement() {
 
 function UserHistory({ userId }: { userId: string }) {
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-user-history', userId],
+    queryKey: queryKeys.admin.users.history(userId),
     queryFn: () => adminApi.getUserHistory(userId),
   });
 

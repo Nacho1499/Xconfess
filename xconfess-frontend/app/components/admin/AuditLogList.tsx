@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { adminApi, AuditLog } from '@/app/lib/api/admin';
+import { queryKeys } from '@/app/lib/api/queryKeys';
 
 export default function AuditLogList() {
   const [actionFilter, setActionFilter] = useState<string>('all');
@@ -11,7 +12,7 @@ export default function AuditLogList() {
   const limit = 50;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-audit-logs', actionFilter, entityTypeFilter, page],
+    queryKey: queryKeys.admin.auditLogs.list({ actionFilter, entityTypeFilter, page }),
     queryFn: () =>
       adminApi.getAuditLogs({
         action: actionFilter !== 'all' ? actionFilter : undefined,

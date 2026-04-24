@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApi } from '@/app/lib/api/admin';
+import { queryKeys } from '@/app/lib/api/queryKeys';
 import { ErrorBoundary } from '@/app/components/common/ErrorBoundary';
 import { TableSkeleton } from '@/app/components/common/SkeletonLoader';
 import { ConfirmDialog } from '@/app/components/admin/ConfirmDialog';
@@ -60,33 +61,34 @@ function FailedJobsList() {
     error,
     refetch,
   } = useQuery({
-    queryKey: ['admin-failed-notification-jobs', filter],
+    queryKey: queryKeys.admin.notificationJobs.list(filter as Record<string, unknown>),
     queryFn: () => adminApi.getFailedNotificationJobs(filter),
-    staleTime: 30000, // 30 seconds
+    staleTime: 30000,
   });
 
   const replayMutation = useMutation({
     mutationFn: (jobId: string) => adminApi.replayFailedNotificationJob(jobId),
     onMutate: async (jobId) => {
-      // Optimistically add to pending set
       setPendingReplays((prev) => new Set(prev).add(jobId));
 
-      // Cancel outgoing refetches
-      await queryClient.cancelQueries({ queryKey: ['admin-failed-notification-jobs'] });
+      await queryClient.cancelQueries({ queryKey: queryKeys.admin.notificationJobs.all() });
 
-      // Snapshot previous value
-      const previousData = queryClient.getQueryData(['admin-failed-notification-jobs', filter]);
+      const previousData = queryClient.getQueryData(
+        queryKeys.admin.notificationJobs.list(filter as Record<string, unknown>)
+      );
 
-      // Optimistically update the job in the list
-      queryClient.setQueryData(['admin-failed-notification-jobs', filter], (old: any) => {
-        if (!old) return old;
-        return {
-          ...old,
-          jobs: old.jobs.map((job: FailedNotificationJob) =>
-            job.id === jobId ? { ...job, _replaying: true } : job
-          ),
-        };
-      });
+      queryClient.setQueryData(
+        queryKeys.admin.notificationJobs.list(filter as Record<string, unknown>),
+        (old: any) => {
+          if (!old) return old;
+          return {
+            ...old,
+            jobs: old.jobs.map((job: FailedNotificationJob) =>
+              job.id === jobId ? { ...job, _replaying: true } : job
+            ),
+          };
+        }
+      );
 
       return { previousData };
     },
@@ -109,9 +111,11 @@ function FailedJobsList() {
         return newSet;
       });
 
-      // Rollback optimistic update
       if (context?.previousData) {
-        queryClient.setQueryData(['admin-failed-notification-jobs', filter], context.previousData);
+        queryClient.setQueryData(
+          queryKeys.admin.notificationJobs.list(filter as Record<string, unknown>),
+          context.previousData
+        );
       }
 
       console.error('Failed to replay job:', error);

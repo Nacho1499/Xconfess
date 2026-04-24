@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { io, Socket } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/app/lib/api/queryKeys";
 import { AUTH_TOKEN_KEY } from "@/app/lib/api/constants";
 import { useFocusTrap } from "@/app/lib/hooks/useFocusTrap";
 import { getApiBaseUrl } from "@/app/lib/config";
@@ -90,14 +91,12 @@ export default function AdminLayout({
 
     socket.on("new-report", () => {
       setNewReportsCount((c) => c + 1);
-      // refresh report list queries
-      queryClient.invalidateQueries({ queryKey: ["admin-reports"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.reports.all() });
     });
 
     socket.on("report-updated", (updatedReport: any) => {
-      // Reconcile optimistic state or just invalidate
       queryClient.setQueriesData(
-        { queryKey: ["admin-reports"] },
+        { queryKey: queryKeys.admin.reports.all() },
         (old: any) => {
           if (!old?.reports) return old;
           const newReports = old.reports.map((r: any) =>
@@ -117,7 +116,7 @@ export default function AdminLayout({
     socket.on("reports-bulk-updated", (updatedReports: any[]) => {
       const updateMap = new Map(updatedReports.map((r) => [r.id, r]));
       queryClient.setQueriesData(
-        { queryKey: ["admin-reports"] },
+        { queryKey: queryKeys.admin.reports.all() },
         (old: any) => {
           if (!old?.reports) return old;
           const newReports = old.reports.map((r: any) =>

@@ -2,14 +2,15 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { adminApi, Analytics } from '@/app/lib/api/admin';
+import { queryKeys } from '@/app/lib/api/queryKeys';
 import AnalyticsDashboard from '@/app/components/admin/AnalyticsDashboard';
 import { AnalyticsLoadingSkeleton } from '@/app/components/analytics/LoadingState';
 
 export default function AdminDashboardPage() {
   const { data: analytics, isLoading } = useQuery<Analytics>({
-    queryKey: ['admin-analytics'],
+    queryKey: queryKeys.admin.analytics.all(),
     queryFn: () => adminApi.getAnalytics(),
-    refetchInterval: 60000, // Refetch every minute
+    refetchInterval: 60000,
   });
 
   if (isLoading) {
