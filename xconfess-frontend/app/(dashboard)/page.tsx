@@ -160,7 +160,7 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
       <Header />
-      <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6 flex flex-col gap-8">
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 md:px-8 lg:px-10 flex flex-col gap-8">
         <UserSummarySection />
         <RecentConfessionsSection />
       </main>

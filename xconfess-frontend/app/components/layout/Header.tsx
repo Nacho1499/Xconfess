@@ -95,7 +95,7 @@ export default function Header() {
               <button
                 ref={menuButtonRef}
                 type="button"
-                className="-mr-2 rounded-full border border-[var(--border)] bg-[var(--surface-muted)] p-2 text-[var(--secondary)] transition-colors hover:bg-[var(--surface-strong)] hover:text-[var(--foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--primary)]"
+                className="-mr-2 rounded-full border border-[var(--border)] bg-[var(--surface-muted)] p-4 text-[var(--secondary)] transition-colors hover:bg-[var(--surface-strong)] hover:text-[var(--foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--primary)] min-h-[44px] min-w-[44px]"
                 aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
                 aria-expanded={mobileMenuOpen}
                 aria-controls="mobile-navigation"

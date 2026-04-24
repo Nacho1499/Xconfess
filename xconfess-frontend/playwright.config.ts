@@ -1,4 +1,4 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -7,6 +7,28 @@ export default defineConfig({
     headless: process.env.CI === 'true',
     baseURL: 'http://localhost:3000',
   },
+  projects: [
+    {
+      name: 'mobile-portrait',
+      use: { ...devices['iPhone SE'] },
+    },
+    {
+      name: 'mobile-landscape',
+      use: { ...devices['iPhone 12 Pro'], viewport: { width: 667, height: 375 } },
+    },
+    {
+      name: 'tablet-portrait',
+      use: { ...devices['iPad Mini'] },
+    },
+    {
+      name: 'tablet-landscape',
+      use: { ...devices['iPad Mini'], viewport: { width: 1024, height: 768 } },
+    },
+    {
+      name: 'desktop',
+      use: { ...devices['Desktop Chrome'] },
+    },
+  ],
   webServer: {
     command: 'npm run dev',
     env: {
