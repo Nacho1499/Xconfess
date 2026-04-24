@@ -221,13 +221,12 @@ impl ConfessionAnchor {
         // topics: ("confession_anchor", hash)
         // data: (event_version, timestamp, anchor_height)
         ConfessionAnchoredEvent {
-              content_hash: hash.clone(),
-              event_version: events::CONFESSION_ANCHORED_EVENT_VERSION,
-              nonce: events::bump_nonce(env, &events::EventNonceKey::ConfessionAnchor(hash.clone())),
-              timestamp,
-              anchor_height,
-          }
-          .publish(&env);
+            hash: hash.clone(),
+            event_version: events::CONFESSION_ANCHORED_EVENT_VERSION,
+            timestamp,
+            anchor_height,
+        }
+        .publish(&env);
 
         symbol_short!("anchored")
     }
@@ -336,18 +335,23 @@ impl ConfessionAnchor {
         let compatible = Self::can_upgrade_from(env.clone(), from_major, from_minor, from_patch);
 
         VersionCompatibilityCheckedEvent {
-              event_version: events::VERSION_COMPATIBILITY_CHECKED_EVENT_VERSION,
-              nonce: events::bump_nonce(env, &events::EventNonceKey::VersionCompatibilityCheck(from_major, from_minor, from_patch)),
-              timestamp: env.ledger().timestamp(),
-              from_major,
-              from_minor,
-              from_patch,
-              to_major: CONTRACT_SEMVER_MAJOR,
-              to_minor: CONTRACT_SEMVER_MINOR,
-              to_patch: CONTRACT_SEMVER_PATCH,
-              compatible,
-          }
-          .publish(&env);
+            event_version: events::VERSION_COMPATIBILITY_CHECKED_EVENT_VERSION,
+            nonce: events::bump_nonce(
+                &env,
+                events::EventNonceKey::VersionCompatibilityCheck(
+                    from_major, from_minor, from_patch,
+                ),
+            ),
+            timestamp: env.ledger().timestamp(),
+            from_major,
+            from_minor,
+            from_patch,
+            to_major: CONTRACT_SEMVER_MAJOR,
+            to_minor: CONTRACT_SEMVER_MINOR,
+            to_patch: CONTRACT_SEMVER_PATCH,
+            compatible,
+        }
+        .publish(&env);
 
         if compatible {
             Ok(())
@@ -1194,5 +1198,34 @@ mod test {
             client.try_assert_upgrade_from(&(CONTRACT_SEMVER_MAJOR + 1), &0, &0),
             Err(Ok(Error::IncompatibleUpgrade))
         );
+    }
+
+    #[test]
+    fn pause_reason_exact_limit_succeeds() {
+        let (env, client) = new_client();
+        let owner = Address::generate(&env);
+        let reason = SorobanString::from_str(
+            &env,
+            &"r".repeat(emergency_pause::events::MAX_PAUSE_REASON_LEN as usize),
+        );
+
+        client.initialize(&owner);
+
+        client.pause(&owner, &reason);
+    }
+
+    #[test]
+    #[should_panic(expected = "pause reason too long")]
+    fn pause_reason_limit_plus_one_rejected() {
+        let (env, client) = new_client();
+        let owner = Address::generate(&env);
+        let reason = SorobanString::from_str(
+            &env,
+            &"r".repeat((emergency_pause::events::MAX_PAUSE_REASON_LEN + 1) as usize),
+        );
+
+        client.initialize(&owner);
+
+        let _ = client.pause(&owner, &reason);
     }
 }

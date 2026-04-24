@@ -6,8 +6,12 @@
 mod confession_reg_auth;
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
+    Symbol, Vec,
 };
+
+pub const MAX_AUTHOR_CONFESSIONS_PER_AUTHOR: u32 = 128;
+pub const REGISTRY_PAYLOAD_TOO_LONG: &str = "registry payload too long";
 
 #[path = "../../access_control.rs"]
 mod access_control;
@@ -50,43 +54,43 @@ pub struct Confession {
     pub status: ConfessionStatus,
 }
 
-  #[contractevent(topics = ["confession_created"], data_format = "vec")]
-  #[derive(Clone, Debug, Eq, PartialEq)]
-  pub struct ConfessionCreatedEvent {
-      #[topic]
-      pub id: u64,
-      pub event_version: u32,
-      pub nonce: u64,
-      pub timestamp: u64,
-      pub author: Address,
-      pub content_hash: BytesN<32>,
-      pub correlation_id: Option<Symbol>,
-  }
+#[contractevent(topics = ["confession_created"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfessionCreatedEvent {
+    #[topic]
+    pub id: u64,
+    pub event_version: u32,
+    pub nonce: u64,
+    pub timestamp: u64,
+    pub author: Address,
+    pub content_hash: BytesN<32>,
+    pub correlation_id: Option<Symbol>,
+}
 
-  #[contractevent(topics = ["confession_updated"], data_format = "vec")]
-  #[derive(Clone, Debug, Eq, PartialEq)]
-  pub struct ConfessionUpdatedEvent {
-      #[topic]
-      pub id: u64,
-      pub event_version: u32,
-      pub nonce: u64,
-      pub timestamp: u64,
-      pub old_status: ConfessionStatus,
-      pub new_status: ConfessionStatus,
-      pub correlation_id: Option<Symbol>,
-  }
+#[contractevent(topics = ["confession_updated"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfessionUpdatedEvent {
+    #[topic]
+    pub id: u64,
+    pub event_version: u32,
+    pub nonce: u64,
+    pub timestamp: u64,
+    pub old_status: ConfessionStatus,
+    pub new_status: ConfessionStatus,
+    pub correlation_id: Option<Symbol>,
+}
 
-  #[contractevent(topics = ["confession_deleted"], data_format = "vec")]
-  #[derive(Clone, Debug, Eq, PartialEq)]
-  pub struct ConfessionDeletedEvent {
-      #[topic]
-      pub id: u64,
-      pub event_version: u32,
-      pub nonce: u64,
-      pub timestamp: u64,
-      pub actor: Address,
-      pub correlation_id: Option<Symbol>,
-  }
+#[contractevent(topics = ["confession_deleted"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfessionDeletedEvent {
+    #[topic]
+    pub id: u64,
+    pub event_version: u32,
+    pub nonce: u64,
+    pub timestamp: u64,
+    pub actor: Address,
+    pub correlation_id: Option<Symbol>,
+}
 
 /// Storage keys used by the contract.
 #[contracttype]
@@ -131,6 +135,19 @@ fn consume_nonce(env: &Env, caller: &Address, nonce: u64) -> Result<(), ReplayEr
         .instance()
         .set(&DataKey::CallerNonce(caller.clone()), &(expected + 1));
     Ok(())
+}
+
+fn bump_confession_event_nonce(env: &Env, id: u64) -> u64 {
+    let key = DataKey::EventNonceConfession(id);
+    let next = env
+        .storage()
+        .instance()
+        .get(&key)
+        .unwrap_or(0u64)
+        .checked_add(1)
+        .expect("event nonce overflow");
+    env.storage().instance().set(&key, &next);
+    next
 }
 
 // ─── Contract ───
@@ -216,6 +233,15 @@ impl ConfessionRegistry {
             panic!("confession with this content hash already exists");
         }
 
+        let mut author_ids: Vec<u64> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AuthorConfessions(author.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        if author_ids.len() >= MAX_AUTHOR_CONFESSIONS_PER_AUTHOR {
+            panic!("{}", REGISTRY_PAYLOAD_TOO_LONG);
+        }
+
         // Allocate ID
         let id: u64 = env
             .storage()
@@ -243,27 +269,22 @@ impl ConfessionRegistry {
             .set(&DataKey::HashIndex(content_hash.clone()), &id);
 
         // Track author → confession index
-        let mut author_ids: Vec<u64> = env
-            .storage()
-            .instance()
-            .get(&DataKey::AuthorConfessions(author.clone()))
-            .unwrap_or_else(|| Vec::new(&env));
         author_ids.push_back(id);
         env.storage()
             .instance()
             .set(&DataKey::AuthorConfessions(author.clone()), &author_ids);
 
-         // Emit event
-         ConfessionCreatedEvent {
-               id,
-               event_version: events::EVENT_VERSION_V1,
-               nonce: events::bump_nonce(env, events::EventNonceKey::Confession(id)),
-               timestamp,
-               author,
-               content_hash,
-               correlation_id: None,
-           }
-           .publish(&env);
+        // Emit event
+        ConfessionCreatedEvent {
+            id,
+            event_version: events::EVENT_VERSION_V1,
+            nonce: bump_confession_event_nonce(&env, id),
+            timestamp,
+            author,
+            content_hash,
+            correlation_id: None,
+        }
+        .publish(&env);
 
         id
     }
@@ -375,16 +396,16 @@ impl ConfessionRegistry {
             .instance()
             .set(&DataKey::Confession(id), &confession);
 
-         ConfessionUpdatedEvent {
-               id,
-               event_version: events::EVENT_VERSION_V1,
-               nonce: events::bump_nonce(env, events::EventNonceKey::Confession(id)),
-               timestamp,
-               old_status,
-               new_status: confession.status,
-               correlation_id: None,
-           }
-           .publish(&env);
+        ConfessionUpdatedEvent {
+            id,
+            event_version: events::EVENT_VERSION_V1,
+            nonce: bump_confession_event_nonce(&env, id),
+            timestamp,
+            old_status,
+            new_status: confession.status,
+            correlation_id: None,
+        }
+        .publish(&env);
     }
 
     /// Replay-protected update_status variant.
@@ -442,15 +463,15 @@ impl ConfessionRegistry {
             .instance()
             .set(&DataKey::Confession(id), &confession);
 
-         ConfessionDeletedEvent {
-               id,
-               event_version: events::EVENT_VERSION_V1,
-               nonce: events::bump_nonce(env, events::EventNonceKey::Confession(id)),
-               timestamp,
-               actor: caller,
-               correlation_id: None,
-           }
-           .publish(&env);
+        ConfessionDeletedEvent {
+            id,
+            event_version: events::EVENT_VERSION_V1,
+            nonce: bump_confession_event_nonce(&env, id),
+            timestamp,
+            actor: caller,
+            correlation_id: None,
+        }
+        .publish(&env);
     }
 
     /// Replay-protected delete_confession variant.
@@ -734,5 +755,39 @@ mod test {
         let (env, client, _admin, _author) = setup();
         let another = Address::generate(&env);
         client.initialize(&another); // should panic
+    }
+
+    #[test]
+    fn author_confession_index_exact_limit_succeeds() {
+        let (env, client, _admin, author) = setup();
+
+        for seed in 0..MAX_AUTHOR_CONFESSIONS_PER_AUTHOR {
+            let hash = sample_hash(&env, seed as u8);
+            let id = client.create_confession(&author, &hash, &(1_000 + seed as u64));
+            assert_eq!(id, seed as u64 + 1);
+        }
+
+        assert_eq!(
+            client.get_total_count(),
+            MAX_AUTHOR_CONFESSIONS_PER_AUTHOR as u64
+        );
+        assert_eq!(
+            client.get_author_confessions(&author).len(),
+            MAX_AUTHOR_CONFESSIONS_PER_AUTHOR
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "registry payload too long")]
+    fn author_confession_index_limit_plus_one_rejected() {
+        let (env, client, _admin, author) = setup();
+
+        for seed in 0..MAX_AUTHOR_CONFESSIONS_PER_AUTHOR {
+            let hash = sample_hash(&env, seed as u8);
+            client.create_confession(&author, &hash, &(1_000 + seed as u64));
+        }
+
+        let hash = sample_hash(&env, MAX_AUTHOR_CONFESSIONS_PER_AUTHOR as u8);
+        let _ = client.create_confession(&author, &hash, &9_999);
     }
 }

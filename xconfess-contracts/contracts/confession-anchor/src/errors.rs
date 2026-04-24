@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
-// Re-export shared error definitions from parent workspace
-pub use xconfess_contract::errors::{
-    codes, ContractError, ErrorClassification, ERROR_REGISTRY_VERSION,
-};
+#[path = "../../error.rs"]
+mod shared_error;
+
+// Re-export shared error definitions from parent workspace.
+#[allow(unused_imports)]
+pub use shared_error::{codes, ContractError, ErrorClassification, ERROR_REGISTRY_VERSION};

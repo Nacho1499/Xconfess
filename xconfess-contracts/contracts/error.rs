@@ -220,7 +220,6 @@ impl ContractError {
             // Retryable: transient state or resource contention
             ContractError::CooldownActive => ErrorClassification::Retryable,
             ContractError::Overflow => ErrorClassification::Retryable,
-            ContractError::TotalOverflow => ErrorClassification::Retryable,
 
             // Terminal: business logic violations
             ContractError::NotFound => ErrorClassification::Terminal,
