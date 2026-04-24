@@ -8,6 +8,7 @@ import {
 } from './interfaces/stellar-config.interface';
 import { handleStellarError } from './utils/stellar-error.handler';
 import { encodeContractArgs, ContractArg } from './utils/parameter.encoder';
+import { InvokeContractDto } from './dto/invoke-contract.dto';
 
 @Injectable()
 export class ContractService {
@@ -17,6 +18,32 @@ export class ContractService {
     private stellarConfig: StellarConfigService,
     private txBuilder: TransactionBuilderService,
   ) {}
+
+  /**
+   * Map an allowlisted HTTP DTO to a low-level invocation. Contract id and
+   * function name are never taken from the client — only from this mapping.
+   */
+  invocationFromAllowlistedDto(
+    dto: InvokeContractDto,
+    verifiedSignerPublicKey: string,
+  ): IContractInvocation {
+    switch (dto.operation) {
+      case 'anchor_confession':
+        return {
+          contractId: this.stellarConfig.getContractId('confessionAnchor'),
+          functionName: 'anchor_confession',
+          args: [
+            { type: 'bytes', value: Buffer.from(dto.confessionHash!, 'hex') },
+            { type: 'u64', value: dto.timestamp! },
+          ],
+          sourceAccount: verifiedSignerPublicKey,
+        };
+      default: {
+        const _never: never = dto.operation;
+        throw new Error(`Unhandled allowlisted operation: ${_never}`);
+      }
+    }
+  }
 
   /**
    * Invoke a Soroban contract function.
@@ -31,7 +58,7 @@ export class ContractService {
       const contract = new StellarSDK.Contract(invocation.contractId);
 
       // Single encoding path — delegates to parameter.encoder.ts
-      const encodedArgs = encodeContractArgs(invocation.args as ContractArg[]);
+      const encodedArgs = encodeContractArgs(invocation.args);
 
       const operation = contract.call(invocation.functionName, ...encodedArgs);
 
@@ -40,17 +67,18 @@ export class ContractService {
         [operation],
       );
       const signedTx = this.txBuilder.signTransaction(tx, signerSecret);
-      const result = await this.txBuilder.submitTransaction(signedTx);
+      const result: ITransactionResult =
+        await this.txBuilder.submitTransaction(signedTx);
       const decodedResult = this.decodeContractResult(result);
 
       return {
         hash: result.hash,
-        success: result.successful,
+        success: result.success,
         result: decodedResult,
       };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Contract invocation failed: ${message}`);
+      this.logger.error('Contract invocation failed: ' + String(message));
       throw handleStellarError(error);
     }
   }
@@ -96,8 +124,10 @@ export class ContractService {
 
       const timestamp = StellarSDK.scValToNative(result as any);
       return timestamp || null;
-    } catch (error) {
-      this.logger.warn(`Confession not found on-chain: ${confessionHash}`);
+    } catch (_error) {
+      this.logger.warn(
+        'Confession not found on-chain: ' + String(confessionHash),
+      );
       return null;
     }
   }
@@ -116,7 +146,7 @@ export class ContractService {
       return StellarSDK.scValToNative(resultValue as any);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Could not decode contract result: ${message}`);
+      this.logger.warn('Could not decode contract result: ' + String(message));
       return null;
     }
   }

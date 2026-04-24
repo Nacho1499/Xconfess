@@ -1,14 +1,18 @@
 #![no_std]
+#![allow(dead_code)]
+#![allow(deprecated)]
 #[cfg(test)]
 #[path = "confession_reg_auth.rs"]
 mod confession_reg_auth;
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env, Vec,
 };
 
 #[path = "../../access_control.rs"]
 mod access_control;
+#[path = "../../emergency_pause/mod.rs"]
+mod emergency_pause;
 #[path = "../../error.rs"]
 mod error;
 #[path = "../../events.rs"]
@@ -46,6 +50,44 @@ pub struct Confession {
     pub status: ConfessionStatus,
 }
 
+  #[contractevent(topics = ["confession_created"], data_format = "vec")]
+  #[derive(Clone, Debug, Eq, PartialEq)]
+  pub struct ConfessionCreatedEvent {
+      #[topic]
+      pub id: u64,
+      pub event_version: u32,
+      pub nonce: u64,
+      pub timestamp: u64,
+      pub author: Address,
+      pub content_hash: BytesN<32>,
+      pub correlation_id: Option<Symbol>,
+  }
+
+  #[contractevent(topics = ["confession_updated"], data_format = "vec")]
+  #[derive(Clone, Debug, Eq, PartialEq)]
+  pub struct ConfessionUpdatedEvent {
+      #[topic]
+      pub id: u64,
+      pub event_version: u32,
+      pub nonce: u64,
+      pub timestamp: u64,
+      pub old_status: ConfessionStatus,
+      pub new_status: ConfessionStatus,
+      pub correlation_id: Option<Symbol>,
+  }
+
+  #[contractevent(topics = ["confession_deleted"], data_format = "vec")]
+  #[derive(Clone, Debug, Eq, PartialEq)]
+  pub struct ConfessionDeletedEvent {
+      #[topic]
+      pub id: u64,
+      pub event_version: u32,
+      pub nonce: u64,
+      pub timestamp: u64,
+      pub actor: Address,
+      pub correlation_id: Option<Symbol>,
+  }
+
 /// Storage keys used by the contract.
 #[contracttype]
 pub enum DataKey {
@@ -59,6 +101,36 @@ pub enum DataKey {
     AuthorConfessions(Address),
     /// Contract admin address.
     Admin,
+    /// Per-caller sequencing nonce for replay protection.
+    CallerNonce(Address),
+    /// Event nonce for confession events.
+    EventNonceConfession(u64),
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum ReplayError {
+    InvalidNonce = 1,
+}
+
+fn expected_nonce(env: &Env, caller: &Address) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::CallerNonce(caller.clone()))
+        .unwrap_or(1u64)
+}
+
+fn consume_nonce(env: &Env, caller: &Address, nonce: u64) -> Result<(), ReplayError> {
+    let expected = expected_nonce(env, caller);
+    if nonce != expected {
+        return Err(ReplayError::InvalidNonce);
+    }
+
+    env.storage()
+        .instance()
+        .set(&DataKey::CallerNonce(caller.clone()), &(expected + 1));
+    Ok(())
 }
 
 // ─── Contract ───
@@ -132,15 +204,8 @@ impl ConfessionRegistry {
         // Require author authorization
         author.require_auth();
 
-        // Check if paused
-        let paused: bool = env
-            .storage()
-            .instance()
-            .get(&symbol_short!("paused"))
-            .unwrap_or(false);
-        if paused {
-            panic!("contract paused");
-        }
+        // Check if paused — use shared emergency pause module
+        emergency_pause::assert_not_paused(&env).unwrap_or_else(|err| panic!("{}", err as u32));
 
         // Enforce uniqueness on content_hash
         if env
@@ -188,10 +253,17 @@ impl ConfessionRegistry {
             .instance()
             .set(&DataKey::AuthorConfessions(author.clone()), &author_ids);
 
-        // Emit event
-        let event_topic = Symbol::new(&env, "confession_created");
-        env.events()
-            .publish((event_topic, id), (author, content_hash, timestamp));
+         // Emit event
+         ConfessionCreatedEvent {
+               id,
+               event_version: events::EVENT_VERSION_V1,
+               nonce: events::bump_nonce(env, events::EventNonceKey::Confession(id)),
+               timestamp,
+               author,
+               content_hash,
+               correlation_id: None,
+           }
+           .publish(&env);
 
         id
     }
@@ -232,6 +304,28 @@ impl ConfessionRegistry {
         next_id - 1
     }
 
+    /// Return the next valid nonce for a caller in sequenced mutation methods.
+    pub fn get_expected_nonce(env: Env, caller: Address) -> u64 {
+        expected_nonce(&env, &caller)
+    }
+
+    /// Replay-protected create_confession variant.
+    pub fn create_confession_seq(
+        env: Env,
+        author: Address,
+        content_hash: BytesN<32>,
+        timestamp: u64,
+        nonce: u64,
+    ) -> Result<u64, ReplayError> {
+        consume_nonce(&env, &author, nonce)?;
+        Ok(Self::create_confession(
+            env,
+            author,
+            content_hash,
+            timestamp,
+        ))
+    }
+
     // ─── Update Status ───
 
     /// Update the status of a confession.
@@ -248,15 +342,8 @@ impl ConfessionRegistry {
     ) {
         caller.require_auth();
 
-        // Pause guard — mirrors create_confession
-        let paused: bool = env
-            .storage()
-            .instance()
-            .get(&symbol_short!("paused"))
-            .unwrap_or(false);
-        if paused {
-            panic!("contract paused");
-        }
+        // Check if paused — use shared emergency pause module
+        emergency_pause::assert_not_paused(&env).unwrap_or_else(|err| panic!("{}", err as u32));
 
         let mut confession: Confession = env
             .storage()
@@ -288,11 +375,30 @@ impl ConfessionRegistry {
             .instance()
             .set(&DataKey::Confession(id), &confession);
 
-        let event_topic = Symbol::new(&env, "confession_updated");
-        env.events().publish(
-            (event_topic, id),
-            (old_status, confession.status, timestamp),
-        );
+         ConfessionUpdatedEvent {
+               id,
+               event_version: events::EVENT_VERSION_V1,
+               nonce: events::bump_nonce(env, events::EventNonceKey::Confession(id)),
+               timestamp,
+               old_status,
+               new_status: confession.status,
+               correlation_id: None,
+           }
+           .publish(&env);
+    }
+
+    /// Replay-protected update_status variant.
+    pub fn update_status_seq(
+        env: Env,
+        caller: Address,
+        id: u64,
+        new_status: ConfessionStatus,
+        timestamp: u64,
+        nonce: u64,
+    ) -> Result<(), ReplayError> {
+        consume_nonce(&env, &caller, nonce)?;
+        Self::update_status(env, caller, id, new_status, timestamp);
+        Ok(())
     }
 
     // ─── Delete ───
@@ -305,15 +411,8 @@ impl ConfessionRegistry {
     pub fn delete_confession(env: Env, caller: Address, id: u64, timestamp: u64) {
         caller.require_auth();
 
-        // Pause guard — mirrors create_confession
-        let paused: bool = env
-            .storage()
-            .instance()
-            .get(&symbol_short!("paused"))
-            .unwrap_or(false);
-        if paused {
-            panic!("contract paused");
-        }
+        // Check if paused — use shared emergency pause module
+        emergency_pause::assert_not_paused(&env).unwrap_or_else(|err| panic!("{}", err as u32));
 
         let mut confession: Confession = env
             .storage()
@@ -343,8 +442,28 @@ impl ConfessionRegistry {
             .instance()
             .set(&DataKey::Confession(id), &confession);
 
-        let event_topic = Symbol::new(&env, "confession_deleted");
-        env.events().publish((event_topic, id), (caller, timestamp));
+         ConfessionDeletedEvent {
+               id,
+               event_version: events::EVENT_VERSION_V1,
+               nonce: events::bump_nonce(env, events::EventNonceKey::Confession(id)),
+               timestamp,
+               actor: caller,
+               correlation_id: None,
+           }
+           .publish(&env);
+    }
+
+    /// Replay-protected delete_confession variant.
+    pub fn delete_confession_seq(
+        env: Env,
+        caller: Address,
+        id: u64,
+        timestamp: u64,
+        nonce: u64,
+    ) -> Result<(), ReplayError> {
+        consume_nonce(&env, &caller, nonce)?;
+        Self::delete_confession(env, caller, id, timestamp);
+        Ok(())
     }
 }
 
@@ -358,7 +477,7 @@ mod test {
     fn setup() -> (Env, ConfessionRegistryClient<'static>, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, ConfessionRegistry);
+        let contract_id = env.register(ConfessionRegistry, ());
         let client = ConfessionRegistryClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
@@ -564,7 +683,7 @@ mod test {
 
     #[test]
     fn test_execute_without_quorum() {
-        let (env, client, admin, _author) = setup();
+        let (_env, client, admin, _author) = setup();
         client.set_quorum(&2);
 
         let id = client.gov_propose(&admin, &governance::model::CriticalAction::Pause);
@@ -575,7 +694,7 @@ mod test {
 
     #[test]
     fn test_governance_revoke() {
-        let (env, client, admin, _author) = setup();
+        let (_env, client, admin, _author) = setup();
         let id = client.gov_propose(&admin, &governance::model::CriticalAction::Pause);
 
         client.gov_approve(&admin, &id);
@@ -612,7 +731,7 @@ mod test {
     #[test]
     #[should_panic(expected = "already initialized")]
     fn test_double_initialization() {
-        let (env, client, admin, _author) = setup();
+        let (env, client, _admin, _author) = setup();
         let another = Address::generate(&env);
         client.initialize(&another); // should panic
     }

@@ -1,12 +1,13 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
 import { authApi } from '../api/authService';
 import {
   AuthContextValue,
   AuthState,
   LoginCredentials,
   RegisterData,
+  User,
 } from '../types/auth';
 import { useAuthStore } from '../store/authStore';
 import { getErrorMessage } from '../utils/errorHandler';
@@ -30,6 +31,9 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps) {
   const setStoreUser = useAuthStore((s) => s.setUser);
   const storeLogout = useAuthStore((s) => s.logout);
+  const isDevBypassEnabled =
+    process.env.NODE_ENV === "development" &&
+    process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === "true";
 
   const [state, setState] = useState<AuthState>({
     user: null,
@@ -39,12 +43,39 @@ export function AuthProvider({ children }: AuthProviderProps) {
   });
 
 
-
+  // Guard against concurrent checkAuth calls (race-condition fix)
+  const checkInProgress = useRef(false);
 
   /**
-  * Check if user is authenticated by validating token with backend
+  * Check if user is authenticated by validating token with backend.
+  * Uses a ref-based mutex to prevent concurrent calls from racing and
+  * causing state oscillation (e.g., loading → authenticated → loading).
   */
   const checkAuth = useCallback(async (): Promise<void> => {
+    if (isDevBypassEnabled) {
+      const mockUser = {
+        id: "dev-user",
+        username: "dev",
+        email: "dev@example.com",
+        role: "admin",
+      };
+
+      setStoreUser(mockUser as never);
+      setState({
+        user: mockUser as never,
+        isAuthenticated: true,
+        isLoading: false,
+        error: null,
+      });
+      return;
+    }
+
+    // Prevent concurrent check calls from racing
+    if (checkInProgress.current) {
+      return;
+    }
+    checkInProgress.current = true;
+
     try {
       const user = await authApi.getCurrentUser();
       setStoreUser(user);
@@ -63,8 +94,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isLoading: false,
         error: null, // Don't show error for initial check
       });
+    } finally {
+      checkInProgress.current = false;
     }
-  }, [setStoreUser]);
+  }, [isDevBypassEnabled, setStoreUser]);
 
   //   Check authentication status on mount
 
@@ -77,7 +110,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   //  Login user with credentials
 
-  const login = async (credentials: LoginCredentials): Promise<void> => {
+  const login = async (credentials: LoginCredentials): Promise<User> => {
     setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
     try {
@@ -93,6 +126,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isLoading: false,
         error: null,
       });
+      return response.user;
     } catch (error) {
       setState({
         user: null,
@@ -131,7 +165,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Logout user and clear auth data
 
   const logout = (): void => {
-    authApi.logout();
+    // Fire-and-forget the session cookie deletion, but clear local state
+    // immediately so AuthGuard can react without waiting for the network.
+    authApi.logout().catch(() => {});
     storeLogout();
     setState({
       user: null,

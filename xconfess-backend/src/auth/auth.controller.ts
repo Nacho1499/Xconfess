@@ -25,7 +25,7 @@ import { RateLimit } from './guard/rate-limit.decorator';
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) { }
+  constructor(private readonly authService: AuthService) {}
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -57,6 +57,12 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   async getProfile(@GetUser('id') userId: number): Promise<any> {
+    return this.getSession(userId);
+  }
+
+  @Get('session')
+  @UseGuards(JwtAuthGuard)
+  async getSession(@GetUser('id') userId: number): Promise<any> {
     try {
       const user = await this.authService.validateUserById(userId);
       if (!user) {
@@ -70,7 +76,7 @@ export class AuthController {
       }
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
-      throw new BadRequestException('Failed to get profile: ' + errorMessage);
+      throw new BadRequestException('Failed to get session: ' + errorMessage);
     }
   }
 

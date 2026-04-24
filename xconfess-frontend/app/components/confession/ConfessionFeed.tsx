@@ -2,30 +2,31 @@
 
 import { useEffect, useRef } from "react";
 import { ConfessionCard } from "./ConfessionCard";
-import { SkeletonCard } from "./LoadingSkeleton";
-import {
-  normalizeConfession,
-  type NormalizedConfession,
-} from "../../lib/utils/normalizeConfession";
-import { useConfessions } from "../../lib/hooks/useConfessions";
+import { ConfessionFeedSkeleton, SkeletonCard } from "./LoadingSkeleton";
+import { useConfessionsQuery } from "../../lib/hooks/useConfessionsQuery";
 import ErrorState from "../common/ErrorState";
 
 export const ConfessionFeed = () => {
   const observerTarget = useRef<HTMLDivElement>(null);
-  const { data, fetchNextPage, hasMore, loading, error, setPage } =
-    useConfessions();
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading,
+    error,
+    refetch,
+  } = useConfessionsQuery();
 
-  const confessions: NormalizedConfession[] =
-    data?.map((c) => normalizeConfession(c)) ?? [];
-
-  const isEmpty = !loading && confessions.length === 0;
+  const confessions = data?.pages.flatMap((page) => page.confessions) ?? [];
+  const isEmpty = !isLoading && confessions.length === 0;
 
   // IntersectionObserver for infinite scroll
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
         const [entry] = entries;
-        if (entry.isIntersecting && hasMore && !loading) {
+        if (entry.isIntersecting && hasNextPage && !isFetchingNextPage) {
           fetchNextPage();
         }
       },
@@ -37,10 +38,12 @@ export const ConfessionFeed = () => {
     return () => {
       if (target) observer.unobserve(target);
     };
-  }, [hasMore, loading, fetchNextPage]);
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   // Retry handler
-  const handleRetry = () => setPage(1); // reload first page
+  const handleRetry = () => {
+    void refetch();
+  };
 
   // Loading skeletons
   const renderLoadingSkeletons = () =>
@@ -49,16 +52,19 @@ export const ConfessionFeed = () => {
     ));
 
   return (
-    <div className="w-full max-w-2xl mx-auto px-4 py-8">
+    <div className="mx-auto w-full max-w-3xl py-2">
       {/* Empty State */}
       {isEmpty && (
-        <div className="text-center py-12">
-          <p className="text-gray-400 text-lg mb-4">
-            No confessions yet. Be the first to share!
+        <div className="luxury-panel rounded-[30px] p-10 text-center">
+          <p className="mb-3 font-editorial text-4xl text-[var(--foreground)]">
+            No confessions yet.
+          </p>
+          <p className="mb-5 text-sm leading-7 text-[var(--secondary)]">
+            Be the first to set the tone for the community.
           </p>
           <button
             onClick={handleRetry}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+            className="rounded-full bg-[linear-gradient(135deg,var(--primary),var(--primary-deep))] px-5 py-2.5 text-sm font-medium text-white shadow-[0_18px_40px_-22px_rgba(143,109,60,0.85)] transition-colors hover:brightness-105"
           >
             Refresh
           </button>
@@ -69,7 +75,6 @@ export const ConfessionFeed = () => {
       {error && (
         <ErrorState
           error={error.message ?? "Failed to load confessions"}
-          correlationId={error.correlationId}
           title="Failed to load confessions"
           description="Something went wrong while fetching confessions."
           showRetry
@@ -77,39 +82,41 @@ export const ConfessionFeed = () => {
         />
       )}
 
+      {isLoading && confessions.length === 0 && <ConfessionFeedSkeleton />}
+
       {/* Confessions Grid */}
-      {!isEmpty && (
-        <div className="space-y-4">
+      {!isEmpty && confessions.length > 0 && (
+        <div className="space-y-5">
           {confessions.map((confession) => (
             <ConfessionCard key={confession.id} confession={confession} />
           ))}
 
           {/* Loading skeletons while fetching more */}
-          {loading && renderLoadingSkeletons()}
+          {isFetchingNextPage && renderLoadingSkeletons()}
         </div>
       )}
 
       {/* Infinite scroll trigger */}
-      {hasMore && (
+      {hasNextPage && (
         <div
           ref={observerTarget}
           className="h-10 flex items-center justify-center mt-8"
           aria-label="Loading more confessions"
         >
-          {loading && (
-            <div className="flex items-center gap-2 text-gray-400">
-              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100" />
-              <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200" />
+          {isFetchingNextPage && (
+            <div className="flex items-center gap-2 text-[var(--secondary)]">
+              <div className="h-2 w-2 animate-bounce rounded-full bg-[var(--primary)]" />
+              <div className="delay-100 h-2 w-2 animate-bounce rounded-full bg-[var(--primary)]" />
+              <div className="delay-200 h-2 w-2 animate-bounce rounded-full bg-[var(--primary)]" />
             </div>
           )}
         </div>
       )}
 
       {/* End of feed message */}
-      {!hasMore && confessions.length > 0 && (
-        <div className="text-center py-8">
-          <p className="text-gray-500">
+      {!hasNextPage && confessions.length > 0 && (
+        <div className="py-8 text-center">
+          <p className="text-[var(--secondary)]">
             You&apos;ve reached the end of confessions
           </p>
         </div>

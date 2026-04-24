@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bull';
+import { InjectQueue } from '@nestjs/bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import {
@@ -12,7 +12,7 @@ import {
   CreateNotificationDto,
   NotificationQueryDto,
 } from '../dto/notification.dto';
-import { Queue } from 'bull';
+import { Queue } from 'bullmq';
 
 @Injectable()
 export class NotificationService {
@@ -25,7 +25,11 @@ export class NotificationService {
     private notificationQueue: Queue,
   ) {}
 
-  async enqueueNotification(type: string, payload: any, jobId?: string): Promise<void> {
+  async enqueueNotification(
+    type: string,
+    payload: any,
+    jobId?: string,
+  ): Promise<void> {
     await this.notificationQueue.add(
       'send-notification',
       {

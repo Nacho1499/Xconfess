@@ -1,15 +1,33 @@
-use soroban_sdk::{Env, String, symbol_short};
+use soroban_sdk::{contractevent, Address, Env, String};
 
-pub fn emit_paused(env: &Env, actor: &soroban_sdk::Address, reason: String) {
-    env.events().publish(
-        (symbol_short!("paused"), actor.clone()),
-        reason
-    );
+#[contractevent(topics = ["paused"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PausedEvent {
+    #[topic]
+    pub actor: Address,
+    pub reason: String,
 }
 
-pub fn emit_unpaused(env: &Env, actor: &soroban_sdk::Address, reason: String) {
-    env.events().publish(
-        (symbol_short!("unpaused"), actor.clone()),
-        reason
-    );
+#[contractevent(topics = ["unpaused"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnpausedEvent {
+    #[topic]
+    pub actor: Address,
+    pub reason: String,
+}
+
+pub fn emit_paused(env: &Env, actor: &Address, reason: String) {
+    PausedEvent {
+        actor: actor.clone(),
+        reason,
+    }
+    .publish(env);
+}
+
+pub fn emit_unpaused(env: &Env, actor: &Address, reason: String) {
+    UnpausedEvent {
+        actor: actor.clone(),
+        reason,
+    }
+    .publish(env);
 }

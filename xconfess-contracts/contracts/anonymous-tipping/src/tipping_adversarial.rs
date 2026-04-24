@@ -2,8 +2,8 @@
 ///
 /// Uses the Soroban-generated `AnonymousTippingClient` (emitted by `#[contractimpl]`)
 /// after registering the contract in the test sandbox. Because the crate uses
-/// `#![no_std]`, `extern crate std;` is declared here so that `std::panic` and
-/// `std::string` items are reachable inside this `#[cfg(test)]` submodule.
+/// `#![no_std]`, `extern crate std;` is declared here so that `std::string` is
+/// reachable for building test strings in helpers.
 #[cfg(test)]
 mod adversarial {
     extern crate std;
@@ -12,13 +12,14 @@ mod adversarial {
 
     // The #[contractimpl] macro emits `AnonymousTippingClient<'_>` alongside
     // the contract struct at the crate root.
-    use crate::{AnonymousTipping, AnonymousTippingClient};
+    use crate::{AnonymousTipping, AnonymousTippingClient, Error};
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
     fn setup() -> (Env, Address) {
         let env = Env::default();
-        let contract_id = env.register_contract(None, AnonymousTipping);
+        env.mock_all_auths();
+        let contract_id = env.register(AnonymousTipping, ());
         AnonymousTippingClient::new(&env, &contract_id).init();
         (env, contract_id)
     }
@@ -38,10 +39,8 @@ mod adversarial {
         let (env, id) = setup();
         let c = mk_client(&env, &id);
         let recipient = Address::generate(&env);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.send_tip(&recipient, &0i128);
-        }));
-        assert_panics(r, "tip amount must be positive");
+        let r = c.try_send_tip(&recipient, &0i128);
+        assert_eq!(r, Err(Ok(Error::InvalidTipAmount)));
     }
 
     // ── invalid amount — negative (table-driven) ──────────────────────────────
@@ -51,10 +50,8 @@ mod adversarial {
         let (env, id) = setup();
         let c = mk_client(&env, &id);
         let recipient = Address::generate(&env);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.send_tip(&recipient, &(-1i128));
-        }));
-        assert_panics(r, "tip amount must be positive");
+        let r = c.try_send_tip(&recipient, &(-1i128));
+        assert_eq!(r, Err(Ok(Error::InvalidTipAmount)));
     }
 
     #[test]
@@ -62,10 +59,8 @@ mod adversarial {
         let (env, id) = setup();
         let c = mk_client(&env, &id);
         let recipient = Address::generate(&env);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.send_tip(&recipient, &(-1_000_000i128));
-        }));
-        assert_panics(r, "tip amount must be positive");
+        let r = c.try_send_tip(&recipient, &(-1_000_000i128));
+        assert_eq!(r, Err(Ok(Error::InvalidTipAmount)));
     }
 
     #[test]
@@ -73,10 +68,8 @@ mod adversarial {
         let (env, id) = setup();
         let c = mk_client(&env, &id);
         let recipient = Address::generate(&env);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.send_tip(&recipient, &i128::MIN);
-        }));
-        assert_panics(r, "tip amount must be positive");
+        let r = c.try_send_tip(&recipient, &i128::MIN);
+        assert_eq!(r, Err(Ok(Error::InvalidTipAmount)));
     }
 
     #[test]
@@ -85,10 +78,8 @@ mod adversarial {
         let c = mk_client(&env, &id);
         let recipient = Address::generate(&env);
         let m = meta(&env, 10);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.send_tip_with_proof(&recipient, &0i128, &Some(m.clone()));
-        }));
-        assert_panics(r, "tip amount must be positive");
+        let r = c.try_send_tip_with_proof(&recipient, &0i128, &Some(m.clone()));
+        assert_eq!(r, Err(Ok(Error::InvalidTipAmount)));
     }
 
     #[test]
@@ -97,10 +88,8 @@ mod adversarial {
         let c = mk_client(&env, &id);
         let recipient = Address::generate(&env);
         let m = meta(&env, 10);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.send_tip_with_proof(&recipient, &(-42i128), &Some(m.clone()));
-        }));
-        assert_panics(r, "tip amount must be positive");
+        let r = c.try_send_tip_with_proof(&recipient, &(-42i128), &Some(m.clone()));
+        assert_eq!(r, Err(Ok(Error::InvalidTipAmount)));
     }
 
     // ── proof metadata boundary table ─────────────────────────────────────────
@@ -157,10 +146,8 @@ mod adversarial {
             &env,
             (AnonymousTipping::MAX_PROOF_METADATA_LEN + 1) as usize,
         );
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.send_tip_with_proof(&recipient, &1i128, &Some(m.clone()));
-        }));
-        assert_panics(r, "proof metadata too long");
+        let r = c.try_send_tip_with_proof(&recipient, &1i128, &Some(m.clone()));
+        assert_eq!(r, Err(Ok(Error::MetadataTooLong)));
     }
 
     #[test]
@@ -169,10 +156,8 @@ mod adversarial {
         let c = mk_client(&env, &id);
         let recipient = Address::generate(&env);
         let m = meta(&env, 256);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.send_tip_with_proof(&recipient, &1i128, &Some(m.clone()));
-        }));
-        assert_panics(r, "proof metadata too long");
+        let r = c.try_send_tip_with_proof(&recipient, &1i128, &Some(m.clone()));
+        assert_eq!(r, Err(Ok(Error::MetadataTooLong)));
     }
 
     #[test]
@@ -181,10 +166,8 @@ mod adversarial {
         let c = mk_client(&env, &id);
         let recipient = Address::generate(&env);
         let m = meta(&env, 1024);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.send_tip_with_proof(&recipient, &1i128, &Some(m.clone()));
-        }));
-        assert_panics(r, "proof metadata too long");
+        let r = c.try_send_tip_with_proof(&recipient, &1i128, &Some(m.clone()));
+        assert_eq!(r, Err(Ok(Error::MetadataTooLong)));
     }
 
     // ── settlement ID monotonicity ────────────────────────────────────────────
@@ -269,7 +252,7 @@ mod adversarial {
     #[test]
     fn send_tip_and_proof_none_produce_equal_totals() {
         let env = Env::default();
-        let contract_id = env.register_contract(None, AnonymousTipping);
+        let contract_id = env.register(AnonymousTipping, ());
         let c = mk_client(&env, &contract_id);
         c.init();
 
@@ -287,7 +270,7 @@ mod adversarial {
     #[test]
     fn tip_without_explicit_init_still_succeeds() {
         let env = Env::default();
-        let contract_id = env.register_contract(None, AnonymousTipping);
+        let contract_id = env.register(AnonymousTipping, ());
         let c = mk_client(&env, &contract_id);
         // No c.init() call — storage defaults to 0 via `unwrap_or`
         let recipient = Address::generate(&env);
@@ -332,7 +315,7 @@ mod adversarial {
     // ── overflow edge cases ─────────────────────────────────────────────────────
 
     #[test]
-    fn total_overflow_panics() {
+    fn total_overflow_returns_error() {
         let (env, id) = setup();
         let c = mk_client(&env, &id);
         let recipient = Address::generate(&env);
@@ -341,14 +324,12 @@ mod adversarial {
         c.send_tip(&recipient, &(i128::MAX - 100));
 
         // Next tip should overflow
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.send_tip(&recipient, &200i128);
-        }));
-        assert_panics(r, "recipient tip total overflow");
+        let r = c.try_send_tip(&recipient, &200i128);
+        assert_eq!(r, Err(Ok(Error::TotalOverflow)));
     }
 
     #[test]
-    fn nonce_overflow_panics() {
+    fn nonce_overflow_returns_error() {
         let (env, id) = setup();
         let c = mk_client(&env, &id);
         let recipient = Address::generate(&env);
@@ -361,10 +342,8 @@ mod adversarial {
         });
 
         // Next tip should overflow nonce
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            c.send_tip(&recipient, &1i128);
-        }));
-        assert_panics(r, "settlement nonce overflow");
+        let r = c.try_send_tip(&recipient, &1i128);
+        assert_eq!(r, Err(Ok(Error::NonceOverflow)));
     }
 
     // ── metadata edge cases ───────────────────────────────────────────────────
@@ -412,5 +391,39 @@ mod adversarial {
         let sid = c.send_tip(&recipient, &max_amount);
         assert_eq!(sid, 1);
         assert_eq!(c.get_tips(&recipient), max_amount);
+    }
+
+    #[test]
+    fn pause_blocks_state_changing_tip_calls() {
+        let (env, id) = setup();
+        let c = mk_client(&env, &id);
+        let owner = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        c.configure_controls(&owner, &5, &60);
+        c.pause(&owner, &SorobanString::from_str(&env, "incident"));
+        assert!(c.is_paused());
+        assert_eq!(
+            c.try_send_tip(&recipient, &1),
+            Err(Ok(Error::ContractPaused))
+        );
+
+        c.unpause(&owner, &SorobanString::from_str(&env, "resolved"));
+        assert!(!c.is_paused());
+        assert_eq!(c.send_tip(&recipient, &2), 1);
+    }
+
+    #[test]
+    fn per_wallet_rate_limit_throttles_predictably() {
+        let (env, id) = setup();
+        let c = mk_client(&env, &id);
+        let owner = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        c.configure_controls(&owner, &2, &60);
+
+        assert_eq!(c.send_tip(&recipient, &1), 1);
+        assert_eq!(c.send_tip(&recipient, &1), 2);
+        assert_eq!(c.try_send_tip(&recipient, &1), Err(Ok(Error::RateLimited)));
     }
 }

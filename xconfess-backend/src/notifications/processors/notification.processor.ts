@@ -1,12 +1,6 @@
-import {
-  Processor,
-  Process,
-  OnQueueFailed,
-  OnQueueCompleted,
-  InjectQueue,
-} from '@nestjs/bull';
+import { Processor, OnWorkerEvent, InjectQueue, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { Job, Queue } from 'bull';
+import { Job, Queue } from 'bullmq';
 import { EmailNotificationService } from '../services/email-notification.service';
 import { NotificationType } from '../entities/notification.entity';
 
@@ -28,35 +22,43 @@ export interface NotificationJobData {
 }
 
 @Processor(NOTIFICATION_QUEUE)
-export class NotificationProcessor {
+export class NotificationProcessor extends WorkerHost {
   private readonly logger = new Logger(NotificationProcessor.name);
 
   constructor(
     private readonly emailNotificationService: EmailNotificationService,
     @InjectQueue(NOTIFICATION_DLQ)
     private readonly dlq: Queue<NotificationJobData>,
-  ) {}
+  ) {
+    super();
+  }
 
   // ------------------------------------------------------------------ process
-  @Process('send-notification')
-  async handleSendNotification(job: Job<NotificationJobData>): Promise<void> {
-    this.logger.log(
-      `Processing notification job ${job.id} (attempt ${job.attemptsMade + 1})` +
-        ` → userId: ${job.data.userId}`,
-    );
+  async process(job: Job<NotificationJobData>): Promise<void> {
+    if (job.name === 'send-notification') {
+      this.logger.log(
+        `Processing notification job ${job.id} (attempt ${job.attemptsMade + 1})` +
+          ` → userId: ${job.data.userId}`,
+      );
 
-    await this.emailNotificationService.sendEmail(job.data);
+      await this.emailNotificationService.sendEmail(job.data);
+    }
   }
 
   // --------------------------------------------------------------- on:failed
   /**
    * Called after every failed attempt.
-   * When all attempts are exhausted Bull marks the job "failed" — we then
+   * When all attempts are exhausted BullMQ marks the job "failed" — we then
    * copy the full payload + error context into the dead-letter queue.
    */
-  @OnQueueFailed()
-  async onFailed(job: Job<NotificationJobData>, error: Error): Promise<void> {
-    const maxAttempts = job.opts.attempts ?? 1;
+  @OnWorkerEvent('failed')
+  async onFailed(
+    job: Job<NotificationJobData> | undefined,
+    error: Error,
+  ): Promise<void> {
+    if (!job) return;
+
+    const maxAttempts = (job.opts as any)?.attempts ?? 1;
 
     this.logger.warn(
       `Job ${job.id} failed (attempt ${job.attemptsMade}/${maxAttempts}): ${error.message}`,
@@ -90,8 +92,10 @@ export class NotificationProcessor {
   }
 
   // -------------------------------------------------------------- on:completed
-  @OnQueueCompleted()
-  onCompleted(job: Job<NotificationJobData>): void {
-    this.logger.log(`Job ${job.id} completed successfully`);
+  @OnWorkerEvent('completed')
+  onCompleted(job: Job<NotificationJobData> | undefined): void {
+    if (job) {
+      this.logger.log(`Job ${job.id} completed successfully`);
+    }
   }
 }

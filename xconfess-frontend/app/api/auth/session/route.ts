@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getApiBaseUrl } from "@/app/lib/config";
+import { createApiErrorResponse } from "@/lib/apiErrorHandler";
 
 const API_URL = getApiBaseUrl();
 const SESSION_COOKIE_NAME = "xconfess_session";
@@ -12,10 +13,7 @@ export async function POST(request: Request) {
         const password = typeof body?.password === "string" ? body.password : undefined;
 
         if (!email || !password) {
-            return NextResponse.json(
-                { message: "Email and password are required" },
-                { status: 400 },
-            );
+            return createApiErrorResponse("Email and password are required", { status: 400 });
         }
 
         const response = await fetch(`${API_URL}/auth/login`, {
@@ -26,10 +24,11 @@ export async function POST(request: Request) {
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ message: "Login failed" }));
-            return NextResponse.json(
-                { message: error.message ?? "Login failed" },
-                { status: response.status }
-            );
+            return createApiErrorResponse(error, {
+                status: response.status,
+                fallbackMessage: "Login failed",
+                route: "POST /api/auth/session"
+            });
         }
 
         const data = await response.json();
@@ -45,12 +44,16 @@ export async function POST(request: Request) {
             path: "/",
         });
 
-        return NextResponse.json({ user: data.user });
-    } catch {
-        return NextResponse.json(
-            { message: "An unexpected error occurred during login" },
-            { status: 500 }
-        );
+        return NextResponse.json({
+            user: data.user,
+            anonymousUserId: data.anonymousUserId ?? null,
+        });
+    } catch (error) {
+        return createApiErrorResponse(error, {
+            status: 500,
+            fallbackMessage: "An unexpected error occurred during login",
+            route: "POST /api/auth/session"
+        });
     }
 }
 
@@ -59,26 +62,42 @@ export async function GET() {
     const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
 
     if (!token) {
-        return NextResponse.json({ authenticated: false }, { status: 401 });
+        return createApiErrorResponse("Not authenticated", { status: 401 });
     }
 
     try {
         // Bridges the session to the backend to get current user info
-        const response = await fetch(`${API_URL}/auth/profile`, {
+        // We attempt the new canonical /auth/session first
+        let response = await fetch(`${API_URL}/auth/session`, {
             headers: {
                 Authorization: `Bearer ${token}`,
             },
         });
 
+        // Fallback to legacy /auth/me if the new endpoint is not yet available (404)
+        if (!response.ok && response.status === 404) {
+            response = await fetch(`${API_URL}/auth/me`, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
+        }
+
         if (!response.ok) {
-            cookieStore.delete(SESSION_COOKIE_NAME);
-            return NextResponse.json({ authenticated: false }, { status: 401 });
+            // If both fail with 401, clear the cookie
+            if (response.status === 401) {
+                cookieStore.delete(SESSION_COOKIE_NAME);
+            }
+            return createApiErrorResponse("Session expired or invalid", { status: response.status });
         }
 
         const user = await response.json();
         return NextResponse.json({ authenticated: true, user });
-    } catch {
-        return NextResponse.json({ authenticated: false }, { status: 500 });
+    } catch (error) {
+        return createApiErrorResponse(error, {
+            status: 500,
+            route: "GET /api/auth/session"
+        });
     }
 }
 

@@ -3,14 +3,21 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApi, User } from '@/app/lib/api/admin';
+import { ConfirmDialog } from '@/app/components/admin/ConfirmDialog';
+import { useGlobalToast } from '@/app/components/common/Toast';
 
 export default function UserManagement() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [pendingAction, setPendingAction] = useState<{
+    type: 'ban' | 'unban';
+    user: User;
+  } | null>(null);
   const [page, setPage] = useState(1);
   const limit = 20;
 
   const queryClient = useQueryClient();
+  const toast = useGlobalToast();
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-users-search', searchQuery, page],
@@ -21,34 +28,70 @@ export default function UserManagement() {
   const banMutation = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       adminApi.banUser(id, reason),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['admin-users-search'] });
       setSelectedUser(null);
+      toast.success('User banned.', {
+        action: {
+          label: 'Undo',
+          onClick: () => unbanMutation.mutate(variables.id),
+        },
+      });
+    },
+    onError: () => {
+      toast.error('Failed to ban user.');
     },
   });
 
   const unbanMutation = useMutation({
     mutationFn: (id: string) => adminApi.unbanUser(id),
-    onSuccess: () => {
+    onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: ['admin-users-search'] });
       setSelectedUser(null);
+      toast.success('User unbanned.', {
+        action: {
+          label: 'Undo',
+          onClick: () => banMutation.mutate({ id }),
+        },
+      });
+    },
+    onError: () => {
+      toast.error('Failed to unban user.');
     },
   });
 
   const handleBan = (user: User) => {
-    const reason = prompt('Enter ban reason (optional):');
-    if (reason !== null) {
-      if (confirm(`Are you sure you want to ban user ${user.username}?`)) {
-        banMutation.mutate({ id: user.id.toString(), reason: reason || undefined });
-      }
-    }
+    setPendingAction({ type: 'ban', user });
   };
 
   const handleUnban = (user: User) => {
-    if (confirm(`Are you sure you want to unban user ${user.username}?`)) {
-      unbanMutation.mutate(user.id.toString());
-    }
+    setPendingAction({ type: 'unban', user });
   };
+
+  const confirmPendingAction = () => {
+    if (!pendingAction) return;
+
+    if (pendingAction.type === 'ban') {
+      banMutation.mutate({ id: pendingAction.user.id.toString() });
+    } else {
+      unbanMutation.mutate(pendingAction.user.id.toString());
+    }
+    setPendingAction(null);
+  };
+
+  const pendingUser = pendingAction?.user;
+  const pendingTitle =
+    pendingAction?.type === 'ban'
+      ? `Ban ${pendingUser?.username}?`
+      : pendingAction?.type === 'unban'
+        ? `Unban ${pendingUser?.username}?`
+        : '';
+  const pendingDescription =
+    pendingAction?.type === 'ban'
+      ? 'This will block the user from signing in and using the platform.'
+      : pendingAction?.type === 'unban'
+        ? 'This will restore the user account.'
+        : '';
 
   const users = data?.users || [];
   const total = data?.total || 0;
@@ -56,6 +99,19 @@ export default function UserManagement() {
 
   return (
     <div className="space-y-4">
+      <ConfirmDialog
+        open={pendingAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingAction(null);
+        }}
+        title={pendingTitle}
+        description={pendingDescription}
+        confirmLabel={pendingAction?.type === 'ban' ? 'Ban User' : 'Unban User'}
+        variant={pendingAction?.type === 'ban' ? 'danger' : 'default'}
+        loading={banMutation.isPending || unbanMutation.isPending}
+        onConfirm={confirmPendingAction}
+      />
+
       {/* Search */}
       <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-4">
         <div className="flex gap-4">

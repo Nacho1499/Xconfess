@@ -131,7 +131,10 @@ export class AuditLogService {
   async log(dto: CreateAuditLogDto): Promise<void> {
     try {
       const actor = this.resolveActor(dto);
-      const templateKey = this.extractMetadataString(dto.metadata, 'templateKey');
+      const templateKey = this.extractMetadataString(
+        dto.metadata,
+        'templateKey',
+      );
       const templateVersion = this.extractMetadataString(
         dto.metadata,
         'templateVersion',
@@ -168,6 +171,7 @@ export class AuditLogService {
         notes: null,
         ipAddress: dto.context?.ipAddress || null,
         userAgent: dto.context?.userAgent || null,
+        requestId: dto.context?.requestId || null,
       });
 
       await this.auditLogRepository.save(auditLog);
@@ -612,7 +616,9 @@ export class AuditLogService {
         templateKey,
         templateVersion: failedVersion,
         changeType: 'fallback_activation',
-        actorId: String(context?.actor?.id || context?.userId || 'template-fallback'),
+        actorId: String(
+          context?.actor?.id || context?.userId || 'template-fallback',
+        ),
         actorType:
           context?.actor?.type || (context?.userId ? 'admin' : 'system'),
         before: { activeVersion: failedVersion },
@@ -646,9 +652,9 @@ export class AuditLogService {
         .getMany();
 
       return logs;
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error(
-        `Failed to find audit logs by entity: ${error.message}`,
+        `Failed to find audit logs by entity: ${error instanceof Error ? error.message : String(error)}`,
       );
       return [];
     }
@@ -669,8 +675,10 @@ export class AuditLogService {
         order: { createdAt: 'DESC' },
         relations: ['admin'],
       });
-    } catch (error) {
-      this.logger.error(`Failed to find audit logs by user: ${error.message}`);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to find audit logs by user: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return [];
     }
   }
@@ -752,9 +760,10 @@ export class AuditLogService {
       }
 
       if (options.requestId) {
-        query.andWhere("audit_log.metadata->>'requestId' = :requestId", {
-          requestId: options.requestId,
-        });
+        query.andWhere(
+          "(audit_log.request_id = :requestId OR audit_log.metadata->>'requestId' = :requestId)",
+          { requestId: options.requestId },
+        );
       }
 
       if (options.exportId) {
@@ -805,8 +814,10 @@ export class AuditLogService {
         limit: options.limit || 100,
         offset: options.offset || 0,
       };
-    } catch (error) {
-      this.logger.error(`Failed to get audit logs: ${error.message}`);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to get audit logs: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return {
         logs: [],
         total: 0,
@@ -858,8 +869,10 @@ export class AuditLogService {
         totalLogs,
         actionTypeCounts,
       };
-    } catch (error) {
-      this.logger.error(`Failed to get audit log statistics: ${error.message}`);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to get audit log statistics: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return {
         totalLogs: 0,
         actionTypeCounts: [],
@@ -940,9 +953,9 @@ export class AuditLogService {
         limit: options.limit || 100,
         offset: options.offset || 0,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error(
-        `Failed to get template rollout history: ${error.message}`,
+        `Failed to get template rollout history: ${error instanceof Error ? error.message : String(error)}`,
       );
       return {
         logs: [],
@@ -982,9 +995,10 @@ export class AuditLogService {
         });
 
       if (options.requestId) {
-        query.andWhere("audit_log.metadata->>'requestId' = :requestId", {
-          requestId: options.requestId,
-        });
+        query.andWhere(
+          "(audit_log.request_id = :requestId OR audit_log.metadata->>'requestId' = :requestId)",
+          { requestId: options.requestId },
+        );
       }
 
       if (options.exportId) {
@@ -1036,8 +1050,10 @@ export class AuditLogService {
         limit: options.limit || 100,
         offset: options.offset || 0,
       };
-    } catch (error) {
-      this.logger.error(`Failed to get export access trail: ${error.message}`);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Failed to get export access trail: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return {
         logs: [],
         total: 0,

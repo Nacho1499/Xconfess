@@ -59,6 +59,9 @@ export enum AuditActionType {
   EXPORT_GENERATION_COMPLETED = 'export_generation_completed',
   EXPORT_LINK_REFRESHED = 'export_link_refreshed',
   EXPORT_DOWNLOADED = 'export_downloaded',
+
+  /** Privileged Stellar server-signed contract invocation */
+  STELLAR_CONTRACT_INVOCATION = 'stellar_contract_invocation',
 }
 
 @Entity('audit_logs')
@@ -66,6 +69,7 @@ export enum AuditActionType {
 @Index(['action'])
 @Index(['createdAt'])
 @Index(['entityType', 'entityId'])
+@Index(['requestId'])
 export class AuditLog {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -101,6 +105,9 @@ export class AuditLog {
 
   @Column({ name: 'user_agent', type: 'text', nullable: true })
   userAgent: string | null;
+
+  @Column({ name: 'request_id', type: 'varchar', length: 64, nullable: true })
+  requestId: string | null;
 
   @CreateDateColumn({ name: 'createdAt', type: 'timestamp with time zone' })
   createdAt: Date;

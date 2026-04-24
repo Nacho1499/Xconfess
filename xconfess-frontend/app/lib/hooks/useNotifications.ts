@@ -32,6 +32,9 @@ export function useNotifications(userId: string): UseNotificationsReturn {
   const socketRef = useRef<Socket | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const { handleError } = useApiError({ context: 'Notifications' });
+  const debugNotifications =
+    process.env.NODE_ENV === 'development' &&
+    process.env.NEXT_PUBLIC_DEBUG_NOTIFICATIONS === 'true';
 
   // Initialize notification sound
   useEffect(() => {
@@ -44,10 +47,12 @@ export function useNotifications(userId: string): UseNotificationsReturn {
   const playNotificationSound = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.play().catch((err) => {
-        console.log("Could not play notification sound:", err);
+        if (debugNotifications) {
+          console.warn('Notification sound playback failed', err);
+        }
       });
     }
-  }, []);
+  }, [debugNotifications]);
 
   const fetchNotifications = useCallback(
     async (filter?: NotificationFilter) => {
@@ -128,20 +133,22 @@ export function useNotifications(userId: string): UseNotificationsReturn {
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      console.log("WebSocket connected");
+      if (debugNotifications) {
+        console.debug('Notifications websocket connected');
+      }
       setIsConnected(true);
       // Join user's notification room
       socket.emit("join-notifications", userId);
     });
 
     socket.on("disconnect", () => {
-      console.log("WebSocket disconnected");
+      if (debugNotifications) {
+        console.debug('Notifications websocket disconnected');
+      }
       setIsConnected(false);
     });
 
     socket.on("notification", (notification: Notification) => {
-      console.log("New notification received:", notification);
-
       // Add to notifications list
       setNotifications((prev) => [notification, ...prev]);
       setUnreadCount((prev) => prev + 1);
@@ -160,7 +167,9 @@ export function useNotifications(userId: string): UseNotificationsReturn {
     });
 
     socket.on("connect_error", (error) => {
-      console.error("WebSocket connection error:", error);
+      if (debugNotifications) {
+        console.debug('Notifications websocket connection error', error);
+      }
       setIsConnected(false);
     });
 
@@ -168,7 +177,7 @@ export function useNotifications(userId: string): UseNotificationsReturn {
     return () => {
       socket.disconnect();
     };
-  }, [userId, playNotificationSound]);
+  }, [userId, playNotificationSound, debugNotifications]);
 
   // Request browser notification permission
   useEffect(() => {

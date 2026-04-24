@@ -5,14 +5,18 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { io, Socket } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
-import { AUTH_TOKEN_KEY, USER_DATA_KEY } from "@/app/lib/api/constants";
+import { AUTH_TOKEN_KEY } from "@/app/lib/api/constants";
 import { useFocusTrap } from "@/app/lib/hooks/useFocusTrap";
 import { getApiBaseUrl } from "@/app/lib/config";
+import { useAuth } from "@/app/lib/hooks/useAuth";
 
-function isMockAdminEnabled(): boolean {
-  if (process.env.NEXT_PUBLIC_ADMIN_MOCK === "true") return true;
-  if (typeof window === "undefined") return false;
-  return localStorage.getItem("adminMock") === "true";
+/**
+ * Returns true only when running in a local development environment AND the
+ * shared dev auth bypass flag is explicitly enabled.
+ */
+function isDevBypassEnabled(): boolean {
+  if (process.env.NODE_ENV !== "development") return false;
+  return process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === "true";
 }
 
 export default function AdminLayout({
@@ -22,6 +26,7 @@ export default function AdminLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  const { user, isAuthenticated, isLoading } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [newReportsCount, setNewReportsCount] = useState(0);
   const queryClient = useQueryClient();
@@ -41,43 +46,29 @@ export default function AdminLayout({
   );
 
   useEffect(() => {
-    const mockEnabled = isMockAdminEnabled();
+    // In development mock mode, skip real auth so local UI work is unblocked.
+    // This path is compiled away in production builds (NODE_ENV check is
+    // evaluated at build time by Next.js / webpack dead-code elimination).
+    if (isDevBypassEnabled()) return;
 
-    // In mock mode, auto-seed a demo admin user for convenience
-    if (mockEnabled && !localStorage.getItem(USER_DATA_KEY)) {
-      localStorage.setItem(
-        USER_DATA_KEY,
-        JSON.stringify({
-          id: 1,
-          username: "demo-admin",
-          isAdmin: true,
-          is_active: true,
-        }),
-      );
-      localStorage.setItem(AUTH_TOKEN_KEY, "mock");
+    if (isLoading) {
       return;
     }
 
-    // Check if user is admin
-    const userStr = localStorage.getItem(USER_DATA_KEY);
-    if (!userStr) {
+    if (!isAuthenticated || !user) {
       router.replace("/login");
       return;
     }
 
-    try {
-      const user = JSON.parse(userStr);
-      if (!user?.isAdmin) {
-        router.replace("/");
-      }
-    } catch {
-      router.replace("/login");
+    if (user.role !== "admin") {
+      router.replace("/dashboard");
     }
-  }, [router]);
+  }, [isAuthenticated, isLoading, router, user]);
 
   useEffect(() => {
     // Real-time notifications for new reports (admins only)
-    if (isMockAdminEnabled()) return;
+    if (isDevBypassEnabled()) return;
+    if (!user || user.role !== "admin") return;
     const token =
       typeof window !== "undefined"
         ? localStorage.getItem(AUTH_TOKEN_KEY)
@@ -146,7 +137,7 @@ export default function AdminLayout({
     return () => {
       socket.disconnect();
     };
-  }, [queryClient]);
+  }, [queryClient, user]);
 
   useFocusTrap({
     active: mobileOpen,
@@ -156,6 +147,16 @@ export default function AdminLayout({
     onEscape: () => setMobileOpen(false),
     trapFocus: true,
   });
+
+  if (!isDevBypassEnabled()) {
+    if (isLoading) {
+      return null;
+    }
+
+    if (!isAuthenticated || user?.role !== "admin") {
+      return null;
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -175,9 +176,9 @@ export default function AdminLayout({
             <span className="font-semibold text-gray-900 dark:text-white">
               Admin
             </span>
-            {isMockAdminEnabled() && (
+            {isDevBypassEnabled() && (
               <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200">
-                mock
+                dev
               </span>
             )}
             {newReportsCount > 0 && (
@@ -215,9 +216,9 @@ export default function AdminLayout({
                 <span className="text-lg font-bold text-gray-900 dark:text-white">
                   Admin Dashboard
                 </span>
-                {isMockAdminEnabled() && (
+                {isDevBypassEnabled() && (
                   <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200">
-                    mock
+                    dev
                   </span>
                 )}
               </div>
@@ -285,9 +286,9 @@ export default function AdminLayout({
                 <span className="text-lg font-bold text-gray-900 dark:text-white">
                   Admin Dashboard
                 </span>
-                {isMockAdminEnabled() && (
+                {isDevBypassEnabled() && (
                   <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200">
-                    mock
+                    dev
                   </span>
                 )}
               </div>

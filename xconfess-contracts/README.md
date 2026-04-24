@@ -1,4 +1,4 @@
-# xconfess-contract
+# xconfess-contracts
 
 Soroban smart contract for the XConfess platform. Provides tamper-proof
 on-chain anchoring of anonymous confession hashes on the Stellar network.
@@ -75,7 +75,7 @@ After installing, return to the **monorepo root** and run:
 npm install
 ```
 
-npm workspaces will resolve `@xconfess/backend` and `@xconfess/contract`
+npm workspaces will resolve `xconfess-backend` and `xconfess-contracts`
 together. The contract workspace has no npm dependencies of its own —
 `npm install` is a no-op for it, but the presence of `package.json` lets
 npm scripts at the root delegate to it uniformly.
@@ -85,7 +85,7 @@ npm scripts at the root delegate to it uniformly.
 ## Project structure
 
 ```
-xconfess-contract/
+xconfess-contracts/
 ├── Cargo.toml                          # Rust package manifest and build profile
 ├── package.json                        # npm shim — delegates all scripts to cargo
 ├── README.md                           # This file
@@ -124,7 +124,7 @@ This command:
 # From monorepo root
 npm run contract:build
 
-# From xconfess-contract/ directly
+# From xconfess-contracts/ directly
 cargo build --target wasm32-unknown-unknown
 ```
 
@@ -134,14 +134,14 @@ cargo build --target wasm32-unknown-unknown
 # From monorepo root
 npm run contract:build:release
 
-# From xconfess-contract/ directly
+# From xconfess-contracts/ directly
 cargo build --release --target wasm32-unknown-unknown
 ```
 
 The release WASM is written to:
 
 ```
-xconfess-contract/target/wasm32-unknown-unknown/release/xconfess_contract.wasm
+xconfess-contracts/target/wasm32-unknown-unknown/release/confession_anchor.wasm
 ```
 
 ### Optimise WASM binary (optional — reduces upload fees)
@@ -149,10 +149,10 @@ xconfess-contract/target/wasm32-unknown-unknown/release/xconfess_contract.wasm
 After a release build, run the Stellar CLI optimiser to strip unused sections:
 
 ```bash
-npm run optimize --workspace=xconfess-contract
+npm run optimize --workspace=xconfess-contracts
 # or:
 stellar contract optimize \
-  --wasm target/wasm32-unknown-unknown/release/xconfess_contract.wasm
+  --wasm target/wasm32-unknown-unknown/release/confession_anchor.wasm
 ```
 
 The optimised file is written next to the original with an `.optimized.wasm`
@@ -168,7 +168,7 @@ suffix.
 # From monorepo root
 npm run contract:test
 
-# From xconfess-contract/ directly
+# From xconfess-contracts/ directly
 cargo test
 ```
 
@@ -188,7 +188,7 @@ test result: ok. 23 passed; 0 failed; 0 ignored
 # From monorepo root
 npm run contract:test:integration
 
-# From xconfess-contract/ directly
+# From xconfess-contracts/ directly
 cargo test --test confession_moderation
 cargo test --test access_control
 ```
@@ -196,7 +196,7 @@ cargo test --test access_control
 ### Tests with output (useful for gas figures)
 
 ```bash
-npm run test:verbose --workspace=xconfess-contract
+npm run test:verbose --workspace=xconfess-contracts
 # or:
 cargo test -- --nocapture
 ```
@@ -208,8 +208,8 @@ cargo test -- --nocapture
 cargo install cargo-tarpaulin
 
 # Run
-npm run test:coverage --workspace=xconfess-contract
-# Coverage report written to xconfess-contract/coverage/lcov.info
+npm run test:coverage --workspace=xconfess-contracts
+# Coverage report written to xconfess-contracts/coverage/lcov.info
 ```
 
 ---
@@ -280,7 +280,7 @@ Or directly:
 
 ```bash
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/xconfess_contract.wasm \
+  --wasm target/wasm32-unknown-unknown/release/confession_anchor.wasm \
   --network testnet \
   --source my-deployer-key
 ```
@@ -374,6 +374,7 @@ For comprehensive contract administration guidance, see:
 
 - **[Contract Lifecycle Guide](./CONTRACT_LIFECYCLE.md)** - Complete lifecycle management, initialization procedures, and security considerations
 - **[Administration Guide](./ADMIN_GUIDE.md)** - Practical operational procedures, monitoring, and troubleshooting
+- **[ReputationBadges Model](./REPUTATION_BADGES_MODEL.md)** - Detailed authorization model, badge system, and reputation tracking (ReputationBadges contract)
 
 ### Quick Admin Reference
 
@@ -392,8 +393,8 @@ stellar contract invoke --id $CONTRACT_ID --source-account $ADMIN_KEY -- transfe
 
 | Contract | Admin Functions | Documentation |
 |----------|----------------|---------------|
-| ConfessionAnchor | transfer_admin, get_admin, get_version | [Lifecycle Guide](./CONTRACT_LIFECYCLE.md#confessionanchor-contract) |
-| ReputationBadges | create_badge, award_badge, adjust_reputation | [Lifecycle Guide](./CONTRACT_LIFECYCLE.md#reputationbadges-contract) |
+| ConfessionAnchor | initialize, transfer_owner, grant_admin, revoke_admin, pause, unpause | [Lifecycle Guide](./CONTRACT_LIFECYCLE.md#confessionanchor-contract), [Admin Guide](./ADMIN_GUIDE.md#confessionanchor-contract) |
+| ReputationBadges | initialize, transfer_admin, create_badge, award_badge, adjust_reputation | [Lifecycle Guide](./CONTRACT_LIFECYCLE.md#reputationbadges-contract), [Model Guide](./REPUTATION_BADGES_MODEL.md) |
 | AnonymousTipping | None (decentralized) | [Lifecycle Guide](./CONTRACT_LIFECYCLE.md#anonymoustipping-contract) |
 
 ---

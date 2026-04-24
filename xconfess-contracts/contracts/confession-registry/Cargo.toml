@@ -12,7 +12,5 @@ soroban-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-
-[[test]]
-name = "benchmarks"
-path = "tests/benchmarks.rs"
+anonymous-tipping = { path = "../anonymous-tipping" }
+reputation-badges = { path = "../reputation-badges" }
