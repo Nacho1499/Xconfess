@@ -64,7 +64,10 @@ describe('ConfessionService', () => {
           },
         },
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
-        { provide: AnonymousUserService, useValue: { create: jest.fn(), getAnonIdsForUser: jest.fn() } },
+        {
+          provide: AnonymousUserService,
+          useValue: { create: jest.fn(), getAnonIdsForUser: jest.fn() },
+        },
         {
           provide: ConfigService,
           useValue: {
@@ -72,7 +75,10 @@ describe('ConfessionService', () => {
           },
         },
         { provide: AppLogger, useValue: { log: jest.fn(), error: jest.fn() } },
-        { provide: EncryptionService, useValue: { encrypt: jest.fn(), decrypt: jest.fn() } },
+        {
+          provide: EncryptionService,
+          useValue: { encrypt: jest.fn(), decrypt: jest.fn() },
+        },
         { provide: StellarService, useValue: { anchorConfession: jest.fn() } },
         { provide: CacheService, useValue: { get: jest.fn(), set: jest.fn() } },
         { provide: TagService, useValue: { validateTags: jest.fn() } },

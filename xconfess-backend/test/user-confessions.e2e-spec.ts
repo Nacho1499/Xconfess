@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ForbiddenException } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { AppModule } from './../src/app.module';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -20,7 +20,7 @@ describe('User Confessions (e2e)', () => {
   let anonymousUserRepository: Repository<AnonymousUser>;
   let userAnonRepo: Repository<UserAnonymousUser>;
   let configService: ConfigService;
-  
+
   let testUser: User;
   let otherUser: User;
   let adminUser: User;
@@ -42,7 +42,10 @@ describe('User Confessions (e2e)', () => {
     anonymousUserRepository = app.get(getRepositoryToken(AnonymousUser));
     userAnonRepo = app.get(getRepositoryToken(UserAnonymousUser));
     configService = app.get(ConfigService);
-    aesKey = configService.get<string>('app.confessionAesKey', '12345678901234567890123456789012');
+    aesKey = configService.get<string>(
+      'app.confessionAesKey',
+      '12345678901234567890123456789012',
+    );
   });
 
   beforeEach(async () => {
@@ -53,8 +56,12 @@ describe('User Confessions (e2e)', () => {
     await userRepository.delete({});
 
     const hashedPassword = await bcrypt.hash('testpassword', 10);
-    
-    const createTestUser = async (email: string, username: string, role: UserRole) => {
+
+    const createTestUser = async (
+      email: string,
+      username: string,
+      role: UserRole,
+    ) => {
       const normalizedEmail = email.trim().toLowerCase();
       const { encrypted, iv, tag } = CryptoUtil.encrypt(normalizedEmail);
       const emailHash = CryptoUtil.hash(normalizedEmail);
@@ -70,9 +77,21 @@ describe('User Confessions (e2e)', () => {
       });
     };
 
-    testUser = await createTestUser('test@example.com', 'testuser', UserRole.USER);
-    otherUser = await createTestUser('other@example.com', 'otheruser', UserRole.USER);
-    adminUser = await createTestUser('admin@example.com', 'adminuser', UserRole.ADMIN);
+    testUser = await createTestUser(
+      'test@example.com',
+      'testuser',
+      UserRole.USER,
+    );
+    otherUser = await createTestUser(
+      'other@example.com',
+      'otheruser',
+      UserRole.USER,
+    );
+    adminUser = await createTestUser(
+      'admin@example.com',
+      'adminuser',
+      UserRole.ADMIN,
+    );
 
     // Get tokens
     const login = async (email: string) => {
@@ -87,20 +106,26 @@ describe('User Confessions (e2e)', () => {
     adminAccessToken = await login('admin@example.com');
 
     // Create an anonymous identity for testUser
-    const anon = await anonymousUserRepository.save(anonymousUserRepository.create());
-    await userAnonRepo.save(userAnonRepo.create({
-      userId: testUser.id,
-      anonymousUserId: anon.id,
-    }));
+    const anon = await anonymousUserRepository.save(
+      anonymousUserRepository.create(),
+    );
+    await userAnonRepo.save(
+      userAnonRepo.create({
+        userId: testUser.id,
+        anonymousUserId: anon.id,
+      }),
+    );
 
     // Create confessions for testUser
     for (let i = 1; i <= 5; i++) {
-      await confessionRepository.save(confessionRepository.create({
-        message: encryptConfession(`Confession ${i}`, aesKey),
-        anonymousUser: anon,
-        moderationStatus: i % 2 === 0 ? 'approved' : 'pending',
-        created_at: new Date(Date.now() - i * 1000),
-      }));
+      await confessionRepository.save(
+        confessionRepository.create({
+          message: encryptConfession(`Confession ${i}`, aesKey),
+          anonymousUser: anon,
+          moderationStatus: i % 2 === 0 ? 'approved' : 'pending',
+          created_at: new Date(Date.now() - i * 1000),
+        }),
+      );
     }
   });
 
@@ -128,7 +153,9 @@ describe('User Confessions (e2e)', () => {
       .query({ status: 'approved' })
       .expect(200);
 
-    expect(response.body.data.every(i => i.moderationStatus === 'approved')).toBe(true);
+    expect(
+      response.body.data.every((i: any) => i.moderationStatus === 'approved'),
+    ).toBe(true);
     expect(response.body.data.length).toBeGreaterThan(0);
   });
 

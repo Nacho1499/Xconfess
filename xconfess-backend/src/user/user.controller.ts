@@ -329,12 +329,18 @@ export class UserController {
     try {
       const userId = parseInt(id, 10);
       if (isNaN(userId)) {
-        return { data: [], meta: { total: 0, page: 1, limit: 10, totalPages: 0 } };
+        return {
+          data: [],
+          meta: { total: 0, page: 1, limit: 10, totalPages: 0 },
+        };
       }
 
       const user = await this.userService.findById(userId);
       if (!user || !user.isDiscoverable()) {
-        return { data: [], meta: { total: 0, page: 1, limit: 10, totalPages: 0 } };
+        return {
+          data: [],
+          meta: { total: 0, page: 1, limit: 10, totalPages: 0 },
+        };
       }
 
       const pageNum = parseInt(page || '1', 10);
@@ -348,7 +354,10 @@ export class UserController {
 
       return activities;
     } catch {
-      return { data: [], meta: { total: 0, page: 1, limit: 10, totalPages: 0 } };
+      return {
+        data: [],
+        meta: { total: 0, page: 1, limit: 10, totalPages: 0 },
+      };
     }
   }
 }

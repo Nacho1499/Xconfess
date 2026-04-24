@@ -696,7 +696,7 @@ export class ConfessionService {
       );
 
       return confession;
-    } catch (error) {
+    } catch (error: any) {
       // Option 2: Use maskUserId helper for custom messages
       this.logger.error(
         `Failed to create confession for ${maskUserId(userId)}: ${error.message}`,
@@ -709,7 +709,10 @@ export class ConfessionService {
 
   async getUserConfessions(userId: number, dto: GetUserConfessionsDto) {
     this.logger.log(
-      { action: 'fetch_user_confessions', userId: maskUserId(userId.toString()) },
+      {
+        action: 'fetch_user_confessions',
+        userId: maskUserId(userId.toString()),
+      },
       'ConfessionsService',
     );
 
@@ -728,16 +731,22 @@ export class ConfessionService {
       .andWhere('confession.isDeleted = false');
 
     if (dto.gender) {
-      queryBuilder.andWhere('confession.gender = :gender', { gender: dto.gender });
+      queryBuilder.andWhere('confession.gender = :gender', {
+        gender: dto.gender,
+      });
     }
 
     if (dto.status) {
-      queryBuilder.andWhere('confession.moderationStatus = :status', { status: dto.status });
+      queryBuilder.andWhere('confession.moderationStatus = :status', {
+        status: dto.status,
+      });
     }
 
     // Apply cursor pagination
     if (dto.cursor && sort === SortOrder.NEWEST) {
-      const parsedCursor = decodeCursor<{ id: string; created_at: string }>(dto.cursor);
+      const parsedCursor = decodeCursor<{ id: string; created_at: string }>(
+        dto.cursor,
+      );
       if (parsedCursor) {
         queryBuilder.andWhere(
           '(confession.created_at < :createdAt OR (confession.created_at = :createdAt AND confession.id < :id))',
@@ -814,7 +823,7 @@ export class ConfessionService {
 
       // Decrypt all confessions and convert to DTO
       return confessions.map((confession) => this.toResponseDto(confession));
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(
         'Failed to fetch confessions',
         error.stack,
@@ -835,7 +844,7 @@ export class ConfessionService {
       }
 
       return this.toResponseDto(confession);
-    } catch (error) {
+    } catch (error: any) {
       if (error instanceof NotFoundException) {
         throw error;
       }
