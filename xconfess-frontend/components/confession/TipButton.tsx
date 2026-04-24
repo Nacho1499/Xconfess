@@ -1,38 +1,43 @@
 /**
- * TipButton.tsx
- * Issue #196 – Block tip submission on network mismatch
- * Issue #198 – Prevent duplicate tip verification submits
+ * AnchorButton.tsx
+ * Issue #196 – Block anchor submission on network mismatch with actionable copy
+ * Issue #198 – Prevent duplicate anchor verification submits
+ *
+ * Uses the real useStellarWallet contract:
+ *   isLoading       (not isConnecting)
+ *   isReady         (wallet connected + correct network)
+ *   readinessError  (human-readable reason isReady is false)
+ *   anchor(content) (not signAndSubmitAnchorTx)
  */
 
 "use client";
 
 import React, { useCallback, useRef, useState } from "react";
 import { useStellarWallet } from "@/app/lib/hooks/useStellarWallet";
-import { verifyTip } from "@/lib/services/tipping.service";
 
-interface TipButtonProps {
+interface AnchorButtonProps {
   confessionId: string;
-  tipXdr: string;
+  content: string;
   onSuccess?: () => void;
   onError?: (err: Error) => void;
 }
 
 type SubmitState = "idle" | "pending" | "success" | "error";
 
-export function TipButton({
+export function AnchorButton({
   confessionId,
-  tipXdr,
+  content,
   onSuccess,
   onError,
-}: TipButtonProps) {
+}: AnchorButtonProps) {
   const wallet = useStellarWallet();
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Issue #198 – single in-flight guard
+  // Issue #198 – guard against duplicate in-flight submits
   const inFlightRef = useRef(false);
 
-  const handleTip = useCallback(async () => {
+  const handleAnchor = useCallback(async () => {
     if (inFlightRef.current || submitState === "pending") return;
 
     inFlightRef.current = true;
@@ -40,8 +45,7 @@ export function TipButton({
     setErrorMsg(null);
 
     try {
-      const signedXdr = await wallet.signAndSubmitAnchorTx(tipXdr);
-      await verifyTip({ confessionId, signedXdr });
+      await wallet.anchor(content);
       setSubmitState("success");
       onSuccess?.();
     } catch (err) {
@@ -52,73 +56,60 @@ export function TipButton({
     } finally {
       inFlightRef.current = false;
     }
-  }, [confessionId, onError, onSuccess, submitState, tipXdr, wallet]);
+  }, [content, onError, onSuccess, submitState, wallet]);
 
-  const handleRetry = useCallback(() => {
-    setSubmitState("idle");
-    setErrorMsg(null);
-  }, []);
-
+  // Not yet connected
   if (!wallet.isConnected) {
     return (
       <button
         type="button"
         onClick={wallet.connect}
-        disabled={wallet.isConnecting}
-        className="tip-btn tip-btn--connect"
+        disabled={wallet.isLoading}
+        className="anchor-btn anchor-btn--connect"
       >
-        {wallet.isConnecting ? "Connecting…" : "Connect Wallet to Tip"}
+        {wallet.isLoading ? "Connecting…" : "Connect Wallet to Anchor"}
       </button>
     );
   }
 
-  // Issue #196 – network mismatch blocks tip CTA
-  if (wallet.networkMismatch) {
+  // Issue #196 – connected but not ready (network mismatch or other readiness failure)
+  if (!wallet.isReady) {
     return (
-      <div className="tip-mismatch" role="alert">
-        <p className="tip-mismatch__message">
-          Wallet is on <strong>{wallet.network}</strong> — switch to{" "}
-          <strong>
-            {process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "testnet"}
-          </strong>{" "}
-          in Freighter to send a tip.
+      <div className="anchor-mismatch" role="alert">
+        <p className="anchor-mismatch__message">
+          {wallet.readinessError ??
+            "Wallet is not ready. Please check your network in Freighter."}
         </p>
-        <button type="button" className="tip-btn tip-btn--disabled" disabled>
-          Send Tip
+        <button
+          type="button"
+          className="anchor-btn anchor-btn--disabled"
+          disabled
+        >
+          Anchor Confession
         </button>
       </div>
     );
   }
 
   return (
-    <div className="tip-action">
+    <div className="anchor-action">
       <button
         type="button"
-        onClick={handleTip}
+        onClick={handleAnchor}
+        // Issue #198 – disabled while in-flight
         disabled={submitState === "pending" || submitState === "success"}
-        className={`tip-btn tip-btn--${submitState}`}
+        className={`anchor-btn anchor-btn--${submitState}`}
         aria-busy={submitState === "pending"}
       >
-        {submitState === "pending" && "Sending…"}
-        {submitState === "success" && "Tipped ✓"}
-        {(submitState === "idle" || submitState === "error") && "Send Tip"}
+        {submitState === "pending" && "Anchoring…"}
+        {submitState === "success" && "Anchored ✓"}
+        {(submitState === "idle" || submitState === "error") &&
+          "Anchor Confession"}
       </button>
-
-      {submitState === "error" && (
-        <>
-          {errorMsg && (
-            <p className="tip-action__error" role="alert">
-              {errorMsg}
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={handleRetry}
-            className="tip-btn tip-btn--retry"
-          >
-            Retry
-          </button>
-        </>
+      {submitState === "error" && errorMsg && (
+        <p className="anchor-action__error" role="alert">
+          {errorMsg}
+        </p>
       )}
     </div>
   );

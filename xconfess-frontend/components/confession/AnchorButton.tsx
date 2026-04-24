@@ -1,7 +1,13 @@
 /**
  * AnchorButton.tsx
  * Issue #196 – Block anchor submission on network mismatch with actionable copy
- * Issue #198 – Prevent duplicate tip/anchor verification submits
+ * Issue #198 – Prevent duplicate anchor verification submits
+ *
+ * Uses the real useStellarWallet contract:
+ *   isLoading       (not isConnecting)
+ *   isReady         (wallet connected + correct network)
+ *   readinessError  (human-readable reason isReady is false)
+ *   anchor(content) (not signAndSubmitAnchorTx)
  */
 
 "use client";
@@ -11,8 +17,8 @@ import { useStellarWallet } from "@/app/lib/hooks/useStellarWallet";
 
 interface AnchorButtonProps {
   confessionId: string;
-  anchorXdr: string;
-  onSuccess?: (signedXdr: string) => void;
+  content: string;
+  onSuccess?: () => void;
   onError?: (err: Error) => void;
 }
 
@@ -20,7 +26,7 @@ type SubmitState = "idle" | "pending" | "success" | "error";
 
 export function AnchorButton({
   confessionId,
-  anchorXdr,
+  content,
   onSuccess,
   onError,
 }: AnchorButtonProps) {
@@ -39,9 +45,9 @@ export function AnchorButton({
     setErrorMsg(null);
 
     try {
-      const signedXdr = await wallet.signAndSubmitAnchorTx(anchorXdr);
+      await wallet.anchor(content);
       setSubmitState("success");
-      onSuccess?.(signedXdr);
+      onSuccess?.();
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
       setSubmitState("error");
@@ -50,31 +56,29 @@ export function AnchorButton({
     } finally {
       inFlightRef.current = false;
     }
-  }, [anchorXdr, onError, onSuccess, submitState, wallet]);
+  }, [content, onError, onSuccess, submitState, wallet]);
 
-  // Issue #196 – network mismatch: disable CTA + show actionable guidance
+  // Not yet connected
   if (!wallet.isConnected) {
     return (
       <button
         type="button"
         onClick={wallet.connect}
-        disabled={wallet.isConnecting}
+        disabled={wallet.isLoading}
         className="anchor-btn anchor-btn--connect"
       >
-        {wallet.isConnecting ? "Connecting…" : "Connect Wallet to Anchor"}
+        {wallet.isLoading ? "Connecting…" : "Connect Wallet to Anchor"}
       </button>
     );
   }
 
-  if (wallet.networkMismatch) {
+  // Issue #196 – connected but not ready (network mismatch or other readiness failure)
+  if (!wallet.isReady) {
     return (
       <div className="anchor-mismatch" role="alert">
         <p className="anchor-mismatch__message">
-          Your wallet is on <strong>{wallet.network}</strong> but this app uses{" "}
-          <strong>
-            {process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "testnet"}
-          </strong>
-          . Please switch networks in Freighter before anchoring.
+          {wallet.readinessError ??
+            "Wallet is not ready. Please check your network in Freighter."}
         </p>
         <button
           type="button"
