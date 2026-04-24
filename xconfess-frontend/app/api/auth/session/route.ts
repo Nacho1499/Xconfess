@@ -67,15 +67,28 @@ export async function GET() {
 
     try {
         // Bridges the session to the backend to get current user info
-        const response = await fetch(`${API_URL}/auth/me`, {
+        // We attempt the new canonical /auth/session first
+        let response = await fetch(`${API_URL}/auth/session`, {
             headers: {
                 Authorization: `Bearer ${token}`,
             },
         });
 
+        // Fallback to legacy /auth/me if the new endpoint is not yet available (404)
+        if (!response.ok && response.status === 404) {
+            response = await fetch(`${API_URL}/auth/me`, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
+        }
+
         if (!response.ok) {
-            cookieStore.delete(SESSION_COOKIE_NAME);
-            return createApiErrorResponse("Session expired", { status: 401 });
+            // If both fail with 401, clear the cookie
+            if (response.status === 401) {
+                cookieStore.delete(SESSION_COOKIE_NAME);
+            }
+            return createApiErrorResponse("Session expired or invalid", { status: response.status });
         }
 
         const user = await response.json();
