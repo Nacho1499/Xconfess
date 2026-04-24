@@ -43,80 +43,6 @@ export default function ReportList() {
       }),
   });
 
-  const resolveMutation = useMutation({
-    mutationFn: ({ id, notes }: { id: string; notes?: string }) =>
-      adminApi.resolveReport(id, notes),
-    onMutate: async ({ id }) => {
-      await queryClient.cancelQueries({ queryKey: ["admin-reports"] });
-      const previousData = queryClient.getQueryData(["admin-reports"]);
-      queryClient.setQueriesData(
-        { queryKey: ["admin-reports"] },
-        (old: any) => {
-          if (!old?.reports) return old;
-          return {
-            ...old,
-            reports: old.reports.map((r: Report) =>
-              r.id === id ? { ...r, status: "resolved" } : r,
-            ),
-          };
-        },
-      );
-      return { previousData };
-    },
-    onError: (err, newReport, context) => {
-      if (context?.previousData) {
-        queryClient.setQueriesData(
-          { queryKey: ["admin-reports"] },
-          context.previousData,
-        );
-      }
-    },
-    onSuccess: () => {
-      toast.success("Report resolved.");
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-reports"] });
-      setSelectedReport(null);
-    },
-  });
-
-  const dismissMutation = useMutation({
-    mutationFn: ({ id, notes }: { id: string; notes?: string }) =>
-      adminApi.dismissReport(id, notes),
-    onMutate: async ({ id }) => {
-      await queryClient.cancelQueries({ queryKey: ["admin-reports"] });
-      const previousData = queryClient.getQueryData(["admin-reports"]);
-      queryClient.setQueriesData(
-        { queryKey: ["admin-reports"] },
-        (old: any) => {
-          if (!old?.reports) return old;
-          return {
-            ...old,
-            reports: old.reports.map((r: Report) =>
-              r.id === id ? { ...r, status: "dismissed" } : r,
-            ),
-          };
-        },
-      );
-      return { previousData };
-    },
-    onError: (err, newReport, context) => {
-      if (context?.previousData) {
-        queryClient.setQueriesData(
-          { queryKey: ["admin-reports"] },
-          context.previousData,
-        );
-      }
-    },
-    onSuccess: () => {
-      toast.success("Report dismissed.");
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-reports"] });
-      setSelectedReport(null);
-    },
-  });
-
   const bulkResolveMutation = useMutation({
     mutationFn: ({ ids, notes }: { ids: string[]; notes?: string }) =>
       adminApi.bulkResolveReports(ids, notes),
@@ -187,12 +113,7 @@ export default function ReportList() {
         <ReportDetail
           report={report}
           onBack={() => setSelectedReport(null)}
-          onResolve={(notes) =>
-            resolveMutation.mutate({ id: report.id, notes })
-          }
-          onDismiss={(notes) =>
-            dismissMutation.mutate({ id: report.id, notes })
-          }
+          onActionSuccess={() => setSelectedReport(null)}
         />
       );
     }

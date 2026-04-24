@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useQueries } from '@tanstack/react-query';
+import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { Report, adminApi } from '@/app/lib/api/admin';
 import { MODERATION_TEMPLATES } from '@/app/lib/utils/moderationTemplates';
 import { useGlobalToast } from '@/app/components/common/Toast';
@@ -14,8 +14,7 @@ import {
 interface ReportDetailProps {
   report: Report;
   onBack: () => void;
-  onResolve: (notes?: string) => void;
-  onDismiss: (notes?: string) => void;
+  onActionSuccess: () => void;
 }
 
 type PendingAction = 'resolve' | 'dismiss' | 'delete' | 'hide' | null;
@@ -23,12 +22,78 @@ type PendingAction = 'resolve' | 'dismiss' | 'delete' | 'hide' | null;
 export default function ReportDetail({
   report,
   onBack,
-  onResolve,
-  onDismiss,
+  onActionSuccess,
 }: ReportDetailProps) {
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const toast = useGlobalToast();
+  const queryClient = useQueryClient();
+
+  const resolveMutation = useMutation({
+    mutationFn: ({ id, notes }: { id: string; notes?: string }) =>
+      adminApi.resolveReport(id, notes),
+    onMutate: async ({ id }) => {
+      await queryClient.cancelQueries({ queryKey: ['admin-reports'] });
+      const previousData = queryClient.getQueryData(['admin-reports']);
+      queryClient.setQueriesData({ queryKey: ['admin-reports'] }, (old: any) => {
+        if (!old?.reports) return old;
+        return {
+          ...old,
+          reports: old.reports.map((r: Report) =>
+            r.id === id ? { ...r, status: 'resolved' } : r,
+          ),
+        };
+      });
+      return { previousData };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previousData) {
+        queryClient.setQueriesData({ queryKey: ['admin-reports'] }, context.previousData);
+      }
+      toast.error('Failed to resolve report');
+    },
+    onSuccess: () => {
+      toast.success('Report resolved.');
+      setPendingAction(null);
+      onActionSuccess();
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-reports'] });
+    },
+  });
+
+  const dismissMutation = useMutation({
+    mutationFn: ({ id, notes }: { id: string; notes?: string }) =>
+      adminApi.dismissReport(id, notes),
+    onMutate: async ({ id }) => {
+      await queryClient.cancelQueries({ queryKey: ['admin-reports'] });
+      const previousData = queryClient.getQueryData(['admin-reports']);
+      queryClient.setQueriesData({ queryKey: ['admin-reports'] }, (old: any) => {
+        if (!old?.reports) return old;
+        return {
+          ...old,
+          reports: old.reports.map((r: Report) =>
+            r.id === id ? { ...r, status: 'dismissed' } : r,
+          ),
+        };
+      });
+      return { previousData };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previousData) {
+        queryClient.setQueriesData({ queryKey: ['admin-reports'] }, context.previousData);
+      }
+      toast.error('Failed to dismiss report');
+    },
+    onSuccess: () => {
+      toast.success('Report dismissed.');
+      setPendingAction(null);
+      onActionSuccess();
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-reports'] });
+    },
+  });
 
   const [reportAuditQ, confessionAuditQ] = useQueries({
     queries: [
@@ -72,32 +137,29 @@ export default function ReportDetail({
     (!report.confessionId || confessionAuditQ.isError);
 
   const handleConfirmedAction = async () => {
+    if (pendingAction === 'resolve') {
+      resolveMutation.mutate({ id: report.id, notes: resolutionNotes || undefined });
+      return;
+    }
+    if (pendingAction === 'dismiss') {
+      dismissMutation.mutate({ id: report.id, notes: resolutionNotes || undefined });
+      return;
+    }
     try {
-      switch (pendingAction) {
-        case 'resolve':
-          onResolve(resolutionNotes || undefined);
-          break;
-        case 'dismiss':
-          onDismiss(resolutionNotes || undefined);
-          break;
-        case 'delete':
-          await adminApi.deleteConfession(
-            report.confessionId,
-            'Deleted via report resolution',
-          );
-          toast.success('Confession deleted successfully');
-          onBack();
-          break;
-        case 'hide':
-          await adminApi.hideConfession(
-            report.confessionId,
-            'Hidden via report resolution',
-          );
-          toast.success('Confession hidden successfully');
-          onBack();
-          break;
-        default:
-          break;
+      if (pendingAction === 'delete') {
+        await adminApi.deleteConfession(
+          report.confessionId,
+          'Deleted via report resolution',
+        );
+        toast.success('Confession deleted successfully');
+        onBack();
+      } else if (pendingAction === 'hide') {
+        await adminApi.hideConfession(
+          report.confessionId,
+          'Hidden via report resolution',
+        );
+        toast.success('Confession hidden successfully');
+        onBack();
       }
     } catch {
       if (pendingAction === 'delete') {
@@ -153,6 +215,7 @@ export default function ReportDetail({
             ? 'danger'
             : 'default'
         }
+        loading={resolveMutation.isPending || dismissMutation.isPending}
         onConfirm={() => {
           void handleConfirmedAction();
         }}
