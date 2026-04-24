@@ -166,7 +166,7 @@ export default function AdminLayout({
           <button
             type="button"
             onClick={() => setMobileOpen(true)}
-            className="inline-flex items-center justify-center rounded-md p-2 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+            className="inline-flex items-center justify-center rounded-md p-4 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 min-h-[44px] min-w-[44px]"
             aria-label="Open sidebar"
             ref={mobileMenuButtonRef}
           >
