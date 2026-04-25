@@ -8,11 +8,9 @@ import {
 } from '../entities/notification.entity';
 import { NotificationPreference } from '../entities/notification-preference.entity';
 import { NOTIFICATION_QUEUE } from '../processors/notification.processor';
-import {
-  CreateNotificationDto,
-  NotificationQueryDto,
-} from '../dto/notification.dto';
+import { CreateNotificationDto, NotificationQueryDto } from '../dto/notification.dto';
 import { Queue } from 'bullmq';
+import { AppLogger } from '../../logger/logger.service';
 
 @Injectable()
 export class NotificationService {
@@ -23,6 +21,7 @@ export class NotificationService {
     private preferenceRepository: Repository<NotificationPreference>,
     @InjectQueue(NOTIFICATION_QUEUE)
     private notificationQueue: Queue,
+    private readonly appLogger: AppLogger,
   ) {}
 
   async enqueueNotification(
@@ -38,6 +37,12 @@ export class NotificationService {
       },
       { jobId },
     );
+
+    this.appLogger.incrementCounter('notification_queue_enqueued_total', 1, {
+      queue: NOTIFICATION_QUEUE,
+      jobName: 'send-notification',
+      notificationType: type,
+    });
   }
 
   async createNotification(
@@ -71,6 +76,12 @@ export class NotificationService {
         },
         { jobId: `email-${notification.id}` },
       );
+
+      this.appLogger.incrementCounter('notification_queue_enqueued_total', 1, {
+        queue: NOTIFICATION_QUEUE,
+        jobName: 'send-notification',
+        notificationType: dto.type,
+      });
     }
 
     return notification;

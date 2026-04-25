@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { AuditLog, AuditActionType } from '../../audit-log/audit-log.entity';
 import { Request } from 'express';
 
@@ -21,10 +21,15 @@ export class ModerationService {
     metadata: Record<string, any> | null,
     notes: string | null,
     request?: Request,
+    manager?: EntityManager,
   ): Promise<AuditLog> {
     const requestId = (request as any)?.requestId || null;
 
-    const auditLog = this.auditLogRepository.create({
+    const repo = manager
+      ? manager.getRepository(AuditLog)
+      : this.auditLogRepository;
+
+    const auditLog = repo.create({
       adminId,
       action,
       entityType,
@@ -41,7 +46,7 @@ export class ModerationService {
       requestId,
     });
 
-    const saved = await this.auditLogRepository.save(auditLog);
+    const saved = await repo.save(auditLog);
     this.logger.log(`Audit log created: ${action} by admin ${adminId}`);
     return saved;
   }

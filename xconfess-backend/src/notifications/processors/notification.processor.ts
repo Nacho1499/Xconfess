@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
 import { EmailNotificationService } from '../services/email-notification.service';
 import { NotificationType } from '../entities/notification.entity';
+import { AppLogger } from '../../logger/logger.service';
 
 export const NOTIFICATION_QUEUE = 'notifications';
 export const NOTIFICATION_DLQ = 'notifications-dlq';
@@ -29,6 +30,7 @@ export class NotificationProcessor extends WorkerHost {
     private readonly emailNotificationService: EmailNotificationService,
     @InjectQueue(NOTIFICATION_DLQ)
     private readonly dlq: Queue<NotificationJobData>,
+    private readonly appLogger: AppLogger,
   ) {
     super();
   }
@@ -41,7 +43,21 @@ export class NotificationProcessor extends WorkerHost {
           ` → userId: ${job.data.userId}`,
       );
 
+      this.appLogger.incrementCounter('notification_queue_processing_total', 1, {
+        queue: NOTIFICATION_QUEUE,
+        jobName: job.name,
+      });
+
+      const startedAt = Date.now();
       await this.emailNotificationService.sendEmail(job.data);
+      this.appLogger.observeTimer(
+        'notification_queue_processing_duration_ms',
+        Date.now() - startedAt,
+        {
+          queue: NOTIFICATION_QUEUE,
+          jobName: job.name,
+        },
+      );
     }
   }
 
@@ -66,7 +82,22 @@ export class NotificationProcessor extends WorkerHost {
 
     const isExhausted = job.attemptsMade >= maxAttempts;
 
-    if (isExhausted) {
+    if (!isExhausted) {
+      this.appLogger.incrementCounter('notification_queue_retry_total', 1, {
+        queue: NOTIFICATION_QUEUE,
+        jobName: job.name,
+        attempt: job.attemptsMade,
+      });
+    } else {
+      this.appLogger.incrementCounter('notification_queue_failure_total', 1, {
+        queue: NOTIFICATION_QUEUE,
+        jobName: job.name,
+      });
+      this.appLogger.incrementCounter('notification_queue_dlq_total', 1, {
+        queue: NOTIFICATION_QUEUE,
+        jobName: job.name,
+      });
+
       this.logger.error(
         `Job ${job.id} exhausted all retries — moving to DLQ`,
         error.stack,
