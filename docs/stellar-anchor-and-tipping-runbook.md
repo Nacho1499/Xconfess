@@ -57,7 +57,14 @@ Operator checks for healthy flow:
   - Keep status as pending.
   - Requeue verification/reconciliation.
   - Do not manually refund unless pending exceeds SLA and failure is confirmed.
-- Escalate when pending exceeds agreed threshold (example: 30 minutes for tip verify).
+- Escalate when pending exceeds agreed threshold (TIP_VERIFICATION_STALE_THRESHOLD_MINUTES).
+
+### Stale Pending (SLA Breach)
+- Definition: pending tip verification exceeds the configured SLA threshold.
+- Action:
+  - Mark as `stale_pending` for operator visibility.
+  - Continue reconciliation attempts if the chain settles later.
+  - Do not auto-refund; follow evidence checklist before manual action.
 
 ### Failed
 - Definition: transaction rejected, malformed, expired, insufficient funds, or network failure.
@@ -110,6 +117,7 @@ Recovery:
 Symptoms:
 - Backend record remains `pending` beyond SLA.
 - Reconciliation not advancing status.
+ - Record is not promoted to `stale_pending` after threshold.
 
 Checks:
 1. Confirm worker/cron is running.

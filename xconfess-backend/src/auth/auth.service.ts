@@ -14,7 +14,7 @@ import { PasswordResetService } from './password-reset.service';
 import { AnonymousUserService } from '../user/anonymous-user.service';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
-import { UserResponse } from '../user/user.controller';
+import { UserResponse } from '../user/dto/user-response.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { CryptoUtil } from '../common/crypto.util';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
