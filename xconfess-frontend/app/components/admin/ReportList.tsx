@@ -5,10 +5,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi, Report } from "@/app/lib/api/admin";
 import { queryKeys } from "@/app/lib/api/queryKeys";
 import ReportDetail from "./ReportDetail";
-import { ConfirmDialog } from "@/app/components/admin/ConfirmDialog";
-import { useGlobalToast } from "@/app/components/common/Toast";
 import { useExportCSV } from "@/app/lib/hooks/useExportCSV";
 import { ExportCsvButton } from "@/app/components/admin/ExportCsvButton";
+import { useAdminConfirmation } from "@/app/components/admin/useAdminConfirmation";
 
 export default function ReportList() {
   const [selectedReport, setSelectedReport] = useState<string | null>(null);
@@ -17,12 +16,11 @@ export default function ReportList() {
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [page, setPage] = useState(1);
-  const [bulkResolveOpen, setBulkResolveOpen] = useState(false);
   const limit = 20;
 
   const queryClient = useQueryClient();
-  const toast = useGlobalToast();
   const { triggerExport, isExporting: isExportingCsv } = useExportCSV({ label: 'reports' });
+  const { openConfirmation, confirmDialog } = useAdminConfirmation();
 
   const reportListKey = queryKeys.admin.reports.list({
     statusFilter,
@@ -45,76 +43,8 @@ export default function ReportList() {
       }),
   });
 
-const resolveMutation = useMutation({
-  mutationFn: ({ id, notes }: { id: string; notes?: string }) =>
-    adminApi.resolveReport(id, notes),
-  onMutate: async ({ id }) => {
-    await queryClient.cancelQueries({ queryKey: queryKeys.admin.reports.all() });
-    const snapshots = queryClient.getQueriesData({ queryKey: queryKeys.admin.reports.all() });
-    queryClient.setQueriesData(
-      { queryKey: queryKeys.admin.reports.all() },
-      (old: any) => {
-        if (!old?.reports) return old;
-        return {
-          ...old,
-          reports: old.reports.map((r: Report) =>
-            r.id === id ? { ...r, status: "resolved" } : r,
-          ),
-        };
-      },
-    );
-    return { snapshots };
-  },
-  onError: (_err, _vars, context) => {
-    context?.snapshots?.forEach(([key, data]) => {
-      queryClient.setQueryData(key, data);
-    });
-  },
-  onSuccess: () => {
-    toast.success("Report resolved.");
-  },
-  onSettled: () => {
-    queryClient.invalidateQueries({ queryKey: queryKeys.admin.reports.all() });
-    setSelectedReport(null);
-  },
-});
-
-const dismissMutation = useMutation({
-  mutationFn: ({ id, notes }: { id: string; notes?: string }) =>
-    adminApi.dismissReport(id, notes),
-  onMutate: async ({ id }) => {
-    await queryClient.cancelQueries({ queryKey: queryKeys.admin.reports.all() });
-    const snapshots = queryClient.getQueriesData({ queryKey: queryKeys.admin.reports.all() });
-    queryClient.setQueriesData(
-      { queryKey: queryKeys.admin.reports.all() },
-      (old: any) => {
-        if (!old?.reports) return old;
-        return {
-          ...old,
-          reports: old.reports.map((r: Report) =>
-            r.id === id ? { ...r, status: "dismissed" } : r,
-          ),
-        };
-      },
-    );
-    return { snapshots };
-  },
-  onError: (_err, _vars, context) => {
-    context?.snapshots?.forEach(([key, data]) => {
-      queryClient.setQueryData(key, data);
-    });
-  },
-  onSuccess: () => {
-    toast.success("Report dismissed.");
-  },
-  onSettled: () => {
-    queryClient.invalidateQueries({ queryKey: queryKeys.admin.reports.all() });
-    setSelectedReport(null);
-  },
-});
   const bulkResolveMutation = useMutation({
-    mutationFn: ({ ids, notes }: { ids: string[]; notes?: string }) =>
-      adminApi.bulkResolveReports(ids, notes),
+    mutationFn: ({ ids }: { ids: string[] }) => adminApi.bulkResolveReports(ids),
     onMutate: async ({ ids }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.admin.reports.all() });
       const snapshots = queryClient.getQueriesData({ queryKey: queryKeys.admin.reports.all() });
@@ -137,9 +67,6 @@ const dismissMutation = useMutation({
         queryClient.setQueryData(key, data);
       });
     },
-    onSuccess: () => {
-      toast.success("Selected reports resolved.");
-    },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.admin.reports.all() });
     },
@@ -159,7 +86,18 @@ const dismissMutation = useMutation({
 
   const handleBulkResolve = () => {
     if (selectedIds.size === 0) return;
-    setBulkResolveOpen(true);
+    const reportIds = Array.from(selectedIds);
+    openConfirmation({
+      title: 'Resolve selected reports?',
+      description: `This will mark ${reportIds.length} selected reports as resolved.`,
+      confirmLabel: 'Resolve',
+      action: () => bulkResolveMutation.mutateAsync({ ids: reportIds }),
+      successMessage: 'Selected reports resolved.',
+      errorMessage: 'Failed to resolve selected reports.',
+      onSuccess: () => {
+        setSelectedIds(new Set());
+      },
+    });
   };
 
   if (isLoading) {
@@ -187,20 +125,7 @@ const dismissMutation = useMutation({
 
   return (
     <div className="space-y-4">
-      <ConfirmDialog
-        open={bulkResolveOpen}
-        onOpenChange={setBulkResolveOpen}
-        title="Resolve selected reports?"
-        description={`This will mark ${selectedIds.size} selected reports as resolved.`}
-        confirmLabel="Resolve"
-        variant="danger"
-        loading={bulkResolveMutation.isPending}
-        onConfirm={() => {
-          bulkResolveMutation.mutate({ ids: Array.from(selectedIds) });
-          setSelectedIds(new Set());
-          setBulkResolveOpen(false);
-        }}
-      />
+      {confirmDialog}
 
       {/* Filters */}
       <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-4">

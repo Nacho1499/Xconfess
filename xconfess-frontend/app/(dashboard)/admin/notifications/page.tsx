@@ -6,9 +6,9 @@ import { adminApi } from '@/app/lib/api/admin';
 import { queryKeys } from '@/app/lib/api/queryKeys';
 import { ErrorBoundary } from '@/app/components/common/ErrorBoundary';
 import { TableSkeleton } from '@/app/components/common/SkeletonLoader';
-import { ConfirmDialog } from '@/app/components/admin/ConfirmDialog';
 import type { FailedNotificationJob, FailedJobsFilter } from '@/app/lib/types/notification-jobs';
 import { useDebounce } from '@/app/lib/hooks/useDebounce';
+import { useAdminConfirmation } from '@/app/components/admin/useAdminConfirmation';
 
 export default function NotificationsPage() {
   return (
@@ -35,9 +35,8 @@ function FailedJobsList() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [minRetries, setMinRetries] = useState<number | undefined>(undefined);
-  const [replayingJobId, setReplayingJobId] = useState<string | null>(null);
-  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [pendingReplays, setPendingReplays] = useState<Set<string>>(new Set());
+  const { openConfirmation, confirmDialog } = useAdminConfirmation();
 
   // Debounce filter changes to avoid excessive API calls
   const debouncedStartDate = useDebounce(startDate, 500);
@@ -92,7 +91,7 @@ function FailedJobsList() {
 
       return { previousData };
     },
-    onSuccess: (data, jobId) => {
+    onSuccess: (_data, jobId) => {
       // Remove from pending set
       setPendingReplays((prev) => {
         const newSet = new Set(prev);
@@ -127,22 +126,16 @@ function FailedJobsList() {
     if (pendingReplays.has(jobId)) {
       return;
     }
-    setReplayingJobId(jobId);
-    setConfirmDialogOpen(true);
-  }, [pendingReplays]);
-
-  const handleConfirmReplay = useCallback(() => {
-    if (replayingJobId) {
-      replayMutation.mutate(replayingJobId);
-      setConfirmDialogOpen(false);
-      setReplayingJobId(null);
-    }
-  }, [replayingJobId, replayMutation]);
-
-  const handleCancelReplay = useCallback(() => {
-    setReplayingJobId(null);
-    setConfirmDialogOpen(false);
-  }, []);
+    openConfirmation({
+      title: 'Replay Failed Job',
+      description:
+        'Are you sure you want to replay this failed notification job? This will attempt to resend the notification.',
+      confirmLabel: 'Replay',
+      action: () => replayMutation.mutateAsync(jobId),
+      successMessage: 'Failed notification job replay queued.',
+      errorMessage: 'Failed to replay notification job.',
+    });
+  }, [openConfirmation, pendingReplays, replayMutation]);
 
   const handleFilterChange = useCallback(() => {
     setPage(1); // Reset to first page when filters change
@@ -392,18 +385,7 @@ function FailedJobsList() {
         </div>
       )}
 
-      {/* Confirm Dialog */}
-      <ConfirmDialog
-        open={confirmDialogOpen}
-        onOpenChange={setConfirmDialogOpen}
-        title="Replay Failed Job"
-        description="Are you sure you want to replay this failed notification job? This will attempt to resend the notification."
-        confirmLabel="Replay"
-        cancelLabel="Cancel"
-        onConfirm={handleConfirmReplay}
-        onCancel={handleCancelReplay}
-        loading={replayMutation.isPending}
-      />
+      {confirmDialog}
     </>
   );
 }

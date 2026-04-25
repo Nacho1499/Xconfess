@@ -4,31 +4,26 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { Report, adminApi } from '@/app/lib/api/admin';
 import { MODERATION_TEMPLATES } from '@/app/lib/utils/moderationTemplates';
-import { useGlobalToast } from '@/app/components/common/Toast';
-import { ConfirmDialog } from '@/app/components/admin/ConfirmDialog';
 import {
   ReportModerationTimeline,
   buildReportModerationTimeline,
 } from '@/app/components/admin/ReportModerationTimeline';
 import { queryKeys } from '@/app/lib/api/queryKeys';
+import { useAdminConfirmation } from '@/app/components/admin/useAdminConfirmation';
 
 interface ReportDetailProps {
   report: Report;
   onBack: () => void;
   onActionSuccess: () => void;
 }
-
-type PendingAction = 'resolve' | 'dismiss' | 'delete' | 'hide' | null;
-
 export default function ReportDetail({
   report,
   onBack,
   onActionSuccess,
 }: ReportDetailProps) {
   const [resolutionNotes, setResolutionNotes] = useState('');
-  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
-  const toast = useGlobalToast();
   const queryClient = useQueryClient();
+  const { openConfirmation, confirmDialog } = useAdminConfirmation();
 
   const resolveMutation = useMutation({
     mutationFn: ({ id, notes }: { id: string; notes?: string }) =>
@@ -51,12 +46,6 @@ export default function ReportDetail({
       if (context?.previousData) {
         queryClient.setQueriesData({ queryKey: ['admin-reports'] }, context.previousData);
       }
-      toast.error('Failed to resolve report');
-    },
-    onSuccess: () => {
-      toast.success('Report resolved.');
-      setPendingAction(null);
-      onActionSuccess();
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-reports'] });
@@ -84,12 +73,6 @@ export default function ReportDetail({
       if (context?.previousData) {
         queryClient.setQueriesData({ queryKey: ['admin-reports'] }, context.previousData);
       }
-      toast.error('Failed to dismiss report');
-    },
-    onSuccess: () => {
-      toast.success('Report dismissed.');
-      setPendingAction(null);
-      onActionSuccess();
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-reports'] });
@@ -137,90 +120,86 @@ export default function ReportDetail({
     reportAuditQ.isError &&
     (!report.confessionId || confessionAuditQ.isError);
 
-  const handleConfirmedAction = async () => {
-    if (pendingAction === 'resolve') {
-      resolveMutation.mutate({ id: report.id, notes: resolutionNotes || undefined });
-      return;
-    }
-    if (pendingAction === 'dismiss') {
-      dismissMutation.mutate({ id: report.id, notes: resolutionNotes || undefined });
-      return;
-    }
-    try {
-      if (pendingAction === 'delete') {
-        await adminApi.deleteConfession(
-          report.confessionId,
-          'Deleted via report resolution',
-        );
-        toast.success('Confession deleted successfully');
-        onBack();
-      } else if (pendingAction === 'hide') {
-        await adminApi.hideConfession(
-          report.confessionId,
-          'Hidden via report resolution',
-        );
-        toast.success('Confession hidden successfully');
-        onBack();
-      }
-    } catch {
-      if (pendingAction === 'delete') {
-        toast.error('Failed to delete confession');
-      } else if (pendingAction === 'hide') {
-        toast.error('Failed to hide confession');
-      }
-    } finally {
-      setPendingAction(null);
-    }
+  const confirmResolve = () => {
+    openConfirmation({
+      title: 'Resolve report?',
+      description: 'This will mark the report as resolved and keep your moderation notes.',
+      confirmLabel: 'Resolve',
+      action: () =>
+        resolveMutation.mutateAsync({
+          id: report.id,
+          notes: resolutionNotes || undefined,
+        }),
+      successMessage: 'Report resolved.',
+      errorMessage: 'Failed to resolve report',
+      onSuccess: () => {
+        onActionSuccess();
+      },
+    });
   };
 
-  const confirmTitle =
-    pendingAction === 'resolve'
-      ? 'Resolve report?'
-      : pendingAction === 'dismiss'
-        ? 'Dismiss report?'
-        : pendingAction === 'delete'
-          ? 'Delete confession?'
-          : 'Hide confession?';
+  const confirmDismiss = () => {
+    openConfirmation({
+      title: 'Dismiss report?',
+      description: 'This will dismiss the report and keep your dismissal notes.',
+      confirmLabel: 'Dismiss',
+      action: () =>
+        dismissMutation.mutateAsync({
+          id: report.id,
+          notes: resolutionNotes || undefined,
+        }),
+      successMessage: 'Report dismissed.',
+      errorMessage: 'Failed to dismiss report',
+      onSuccess: () => {
+        onActionSuccess();
+      },
+    });
+  };
 
-  const confirmDescription =
-    pendingAction === 'resolve'
-      ? 'This will mark the report as resolved and keep your moderation notes.'
-      : pendingAction === 'dismiss'
-        ? 'This will dismiss the report and keep your dismissal notes.'
-        : pendingAction === 'delete'
-          ? 'This action cannot be undone. The confession will be permanently deleted.'
-          : 'This will hide the confession from regular users while preserving it for admins.';
+  const confirmDelete = () => {
+    openConfirmation({
+      title: 'Delete confession?',
+      description: 'This action cannot be undone. The confession will be permanently deleted.',
+      confirmLabel: 'Delete',
+      variant: 'danger',
+      action: () =>
+        adminApi.deleteConfession(
+          report.confessionId,
+          'Deleted via report resolution',
+        ),
+      successMessage: 'Confession deleted successfully',
+      errorMessage: 'Failed to delete confession',
+      onSuccess: () => {
+        onBack();
+      },
+    });
+  };
+
+  const confirmHide = () => {
+    openConfirmation({
+      title: 'Hide confession?',
+      description:
+        'This will hide the confession from regular users while preserving it for admins.',
+      confirmLabel: 'Hide',
+      variant: 'danger',
+      action: () =>
+        adminApi.hideConfession(
+          report.confessionId,
+          'Hidden via report resolution',
+        ),
+      successMessage: 'Confession hidden successfully',
+      errorMessage: 'Failed to hide confession',
+      onSuccess: () => {
+        onBack();
+      },
+    });
+  };
 
   const pending = report.status === 'pending';
 
   return (
     <div className="space-y-6">
-      <ConfirmDialog
-        open={pendingAction !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingAction(null);
-        }}
-        title={confirmTitle}
-        description={confirmDescription}
-        confirmLabel={
-          pendingAction === 'resolve'
-            ? 'Resolve'
-            : pendingAction === 'dismiss'
-              ? 'Dismiss'
-              : pendingAction === 'delete'
-                ? 'Delete'
-                : 'Hide'
-        }
-        variant={
-          pendingAction === 'delete' || pendingAction === 'hide'
-            ? 'danger'
-            : 'default'
-        }
-        loading={resolveMutation.isPending || dismissMutation.isPending}
-        onConfirm={() => {
-          void handleConfirmedAction();
-        }}
-      />
+      {confirmDialog}
 
       <div className="flex items-center justify-between">
         <button
@@ -379,14 +358,14 @@ export default function ReportDetail({
               <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
                 <button
                   type="button"
-                  onClick={() => setPendingAction('resolve')}
+                  onClick={confirmResolve}
                   className="flex-1 rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700"
                 >
                   Resolve Report
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPendingAction('dismiss')}
+                  onClick={confirmDismiss}
                   className="flex-1 rounded-md bg-gray-600 px-4 py-2 text-white hover:bg-gray-700"
                 >
                   Dismiss Report
@@ -400,14 +379,14 @@ export default function ReportDetail({
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => setPendingAction('delete')}
+                    onClick={confirmDelete}
                     className="rounded-md bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700"
                   >
                     Delete Confession
                   </button>
                   <button
                     type="button"
-                    onClick={() => setPendingAction('hide')}
+                    onClick={confirmHide}
                     className="rounded-md bg-yellow-600 px-4 py-2 text-sm text-white hover:bg-yellow-700"
                   >
                     Hide Confession
