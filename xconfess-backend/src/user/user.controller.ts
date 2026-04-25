@@ -32,33 +32,13 @@ import {
   UpdatePrivacySettingsDto,
   PrivacySettingsResponseDto,
 } from './dto/update-privacy-settings.dto';
-import { ApiOperation, ApiResponse, ApiTags, ApiQuery } from '@nestjs/swagger';
+import { ApiOperation, ApiResponse, ApiTags, ApiQuery, ApiParam } from '@nestjs/swagger';
 import { PaginatedUserActivityDto } from './dto/user-activity.dto';
 import { ConfessionService } from '../confession/confession.service';
 import { GetUserConfessionsDto } from '../confession/dto/get-user-confessions.dto';
-import { ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
-
-/**
- * Public user response contract.
- * Internal fields (resetPasswordToken, resetPasswordExpires, password hash,
- * raw email ciphertext) are intentionally omitted.
- */
-export interface UserResponse {
-  id: number;
-  username: string;
-  role: UserRole;
-  is_active: boolean;
-  email: string;
-  notificationPreferences: Record<string, boolean>;
-  privacy: {
-    isDiscoverable: boolean;
-    canReceiveReplies: boolean;
-    showReactions: boolean;
-    dataProcessingConsent: boolean;
-  };
-  createdAt: Date;
-  updatedAt: Date;
-}
+import { UserResponse } from './dto/user-response.dto';
+// Re-export so existing consumers that import UserResponse from this file keep working.
+export { UserResponse } from './dto/user-response.dto';
 
 export interface UserProfileResponse {
   id: number;
@@ -174,9 +154,14 @@ export class UserController {
   async getProfile(@GetUser('id') userId: number): Promise<UserResponse> {
     try {
       const user = await this.userService.findById(userId);
-      if (!user) throw new UnauthorizedException();
+      if (!user || !user.is_active) {
+        throw new UnauthorizedException('User not found');
+      }
       return this.formatUserResponse(user);
     } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new BadRequestException('Failed to get profile: ' + message);
     }
