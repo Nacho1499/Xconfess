@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useStellarWallet } from "@/app/lib/hooks/useStellarWallet";
+import { useStellarWallet } from "@/lib/hooks/useStellarWallet";
 import { Button } from "@/app/components/ui/button";
 import {
   Loader2,

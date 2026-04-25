@@ -13,7 +13,7 @@
 "use client";
 
 import React, { useCallback, useRef, useState } from "react";
-import { useStellarWallet } from "@/app/lib/hooks/useStellarWallet";
+import { useStellarWallet } from "@/lib/hooks/useStellarWallet";
 
 interface AnchorButtonProps {
   confessionId: string;

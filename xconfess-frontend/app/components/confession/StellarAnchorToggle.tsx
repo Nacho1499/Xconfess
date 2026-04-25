@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useStellarWallet } from "@/app/lib/hooks/useStellarWallet";
+import { useStellarWallet } from "@/lib/hooks/useStellarWallet";
 import { freighterGetPublicKey } from "@/lib/wallet/freighterAdapter";
 import { Button } from "@/app/components/ui/button";
 import { ExternalLink, Loader2, CheckCircle2, AlertCircle } from "lucide-react";

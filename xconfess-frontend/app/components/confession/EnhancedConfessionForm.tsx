@@ -21,7 +21,7 @@ import {
   type ConfessionFormData,
   ValidationErrors,
 } from "@/app/lib/utils/validation";
-import { useStellarWallet } from "@/app/lib/hooks/useStellarWallet";
+import { useStellarWallet } from "@/lib/hooks/useStellarWallet";
 import { useDrafts, Draft } from "@/app/lib/hooks/useDrafts";
 import { Eye, EyeOff, Send, Loader2, CloudDownload } from "lucide-react";
 import { cn } from "@/app/lib/utils/cn";
