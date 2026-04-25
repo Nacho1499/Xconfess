@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { authApi } from '../api/authService';
 import {
   AuthContextValue,
@@ -11,6 +12,10 @@ import {
 } from '../types/auth';
 import { useAuthStore } from '../store/authStore';
 import { getErrorMessage } from '../utils/errorHandler';
+import { AppError } from '../utils/errorHandler';
+import {
+  NormalizedAuthError,
+} from '@/lib/normalizeAuthError';
 
 /**
  * Auth Context
@@ -29,6 +34,7 @@ interface AuthProviderProps {
  * Manages global authentication state and provides auth methods
  */
 export function AuthProvider({ children }: AuthProviderProps) {
+  const router = useRouter();
   const setStoreUser = useAuthStore((s) => s.setUser);
   const storeLogout = useAuthStore((s) => s.logout);
   const isDevBypassEnabled =
@@ -43,9 +49,34 @@ export function AuthProvider({ children }: AuthProviderProps) {
     isSessionExpired: false,
   });
 
-
   // Guard against concurrent checkAuth calls (race-condition fix)
   const checkInProgress = useRef(false);
+
+  /**
+   * Handle TERMINAL auth errors: clear session and redirect to login.
+   * TERMINAL errors mean the session is definitely invalid and cannot be recovered.
+   */
+  const handleTerminalAuthError = useCallback((error: AppError) => {
+    // Check if this is a normalized TERMINAL auth error
+    const normalized = (error.details as any)?.normalized as NormalizedAuthError | undefined;
+    
+    if (normalized?.type === "TERMINAL") {
+      // Clear auth state immediately
+      setStoreUser(null);
+      storeLogout();
+      setState({
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        error: null,
+      });
+
+      // Redirect to login only if not already there
+      if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+        router.push('/login');
+      }
+    }
+  }, [setStoreUser, storeLogout, router]);
 
   /**
   * Check if user is authenticated by validating token with backend.
@@ -88,21 +119,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isSessionExpired: false,
       });
     } catch (error) {
-      // Not authenticated or session expired
-      setStoreUser(null);
-      const isExpired = error && typeof error === 'object' && 'status' in error && 
-                       (error as any).status === 401;
-      setState({
-        user: null,
-        isAuthenticated: false,
-        isLoading: false,
-        error: null, // Don't show error for initial check
-        isSessionExpired: isExpired,
-      });
+      // Handle TERMINAL auth errors (invalid session, forbidden, etc.)
+      if (error instanceof AppError) {
+        handleTerminalAuthError(error);
+      } else {
+        // Not authenticated or session expired
+        setStoreUser(null);
+        setState({
+          user: null,
+          isAuthenticated: false,
+          isLoading: false,
+          error: null, // Don't show error for initial check
+        });
+      }
     } finally {
       checkInProgress.current = false;
     }
-  }, [isDevBypassEnabled, setStoreUser]);
+  }, [isDevBypassEnabled, setStoreUser, handleTerminalAuthError]);
 
   //   Check authentication status on mount
 
@@ -134,6 +167,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
       });
       return response.user;
     } catch (error) {
+      // Handle TERMINAL auth errors (invalid credentials, etc.)
+      if (error instanceof AppError) {
+        handleTerminalAuthError(error);
+      }
+      
       setState({
         user: null,
         isAuthenticated: false,
