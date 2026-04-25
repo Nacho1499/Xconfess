@@ -213,6 +213,26 @@ or
 }
 ```
 
+### Moderation consistency guarantees
+
+The following moderation write flows are executed in a single database
+transaction and are atomic:
+
+- Admin report resolution and dismissal (`/api/admin/reports/:id/resolve`,
+  `/api/admin/reports/:id/dismiss`)
+- Admin bulk report resolution (`/api/admin/reports/bulk-resolve`)
+- Admin confession actions (`DELETE /api/admin/confessions/:id`,
+  `/api/admin/confessions/:id/hide`, `/api/admin/confessions/:id/unhide`)
+- Admin user moderation actions (`/api/admin/users/:id/ban`,
+  `/api/admin/users/:id/unban`)
+- Moderation webhook application (`POST /api/webhooks/moderation/results`)
+  where moderation log sync and confession moderation-state update are committed
+  together
+
+If any write in one of these flows fails (for example, audit log persistence
+or a downstream repository save), the whole transaction is rolled back and no
+partial moderation state is committed.
+
 ### 15) Notification preferences (`PUT /api/notifications/preferences`)
 
 ```json

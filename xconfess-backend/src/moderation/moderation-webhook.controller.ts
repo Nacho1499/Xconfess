@@ -58,15 +58,6 @@ export class ModerationWebhookController {
       throw new UnauthorizedException('Invalid signature');
     }
 
-    const confession = await this.confessionRepo.findOne({
-      where: { id: payload.confessionId },
-    });
-
-    if (!confession) {
-      this.logger.error(`Confession ${payload.confessionId} not found`);
-      return { success: false, error: 'Confession not found' };
-    }
-
     const requiresReview =
       payload.moderationStatus === ModerationStatus.FLAGGED;
     const shouldHide = payload.moderationStatus === ModerationStatus.REJECTED;
@@ -78,41 +69,68 @@ export class ModerationWebhookController {
       requiresReview,
     };
     const deliveryHash = this.buildDeliveryHash(serializedPayload);
-    const { isIdempotent } = await this.moderationRepoService.syncWebhookResult(
-      {
-        confessionId: confession.id,
-        content: confession.message,
-        result: moderationResult,
-        deliveryHash,
-        deliveryTimestamp: payload.timestamp,
+
+    const result = await this.confessionRepo.manager.transaction(
+      async (manager) => {
+        const confessionRepo = manager.getRepository(AnonymousConfession);
+        const confession = await confessionRepo.findOne({
+          where: { id: payload.confessionId },
+        });
+
+        if (!confession) {
+          return { status: 'not_found' as const };
+        }
+
+        const { isIdempotent } =
+          await this.moderationRepoService.syncWebhookResult(
+            {
+              confessionId: confession.id,
+              content: confession.message,
+              result: moderationResult,
+              deliveryHash,
+              deliveryTimestamp: payload.timestamp,
+            },
+            manager,
+          );
+
+        if (isIdempotent) {
+          return { status: 'idempotent' as const, confessionId: confession.id };
+        }
+
+        confession.moderationScore = payload.moderationScore;
+        confession.moderationFlags = payload.moderationFlags;
+        confession.moderationStatus = payload.moderationStatus;
+        confession.moderationDetails = payload.details;
+        confession.requiresReview = requiresReview;
+        confession.isHidden = shouldHide;
+
+        await confessionRepo.save(confession);
+
+        return { status: 'processed' as const, confessionId: confession.id };
       },
     );
 
-    if (isIdempotent) {
+    if (result.status === 'not_found') {
+      this.logger.error(`Confession ${payload.confessionId} not found`);
+      return { success: false, error: 'Confession not found' };
+    }
+
+    if (result.status === 'idempotent') {
       this.logger.log(
         `Ignoring duplicate moderation webhook for confession ${payload.confessionId}`,
       );
 
       return {
         success: true,
-        confessionId: payload.confessionId,
+        confessionId: result.confessionId,
         status: payload.moderationStatus,
         isIdempotent: true,
       };
     }
 
-    confession.moderationScore = payload.moderationScore;
-    confession.moderationFlags = payload.moderationFlags;
-    confession.moderationStatus = payload.moderationStatus;
-    confession.moderationDetails = payload.details;
-    confession.requiresReview = requiresReview;
-    confession.isHidden = shouldHide;
-
-    await this.confessionRepo.save(confession);
-
     if (payload.moderationStatus === ModerationStatus.REJECTED) {
       this.eventEmitter.emit('moderation.high-severity', {
-        confessionId: confession.id,
+        confessionId: result.confessionId,
         score: payload.moderationScore,
         flags: payload.moderationFlags,
       });
@@ -120,7 +138,7 @@ export class ModerationWebhookController {
 
     if (payload.moderationStatus === ModerationStatus.FLAGGED) {
       this.eventEmitter.emit('moderation.requires-review', {
-        confessionId: confession.id,
+        confessionId: result.confessionId,
         score: payload.moderationScore,
         flags: payload.moderationFlags,
       });
@@ -132,7 +150,7 @@ export class ModerationWebhookController {
 
     return {
       success: true,
-      confessionId: payload.confessionId,
+      confessionId: result.confessionId,
       status: payload.moderationStatus,
       isIdempotent: false,
     };

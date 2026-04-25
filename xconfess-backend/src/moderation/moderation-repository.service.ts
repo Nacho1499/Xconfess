@@ -41,15 +41,22 @@ export class ModerationRepositoryService {
     return await repo.save(log);
   }
 
-  async syncWebhookResult(params: {
-    confessionId: string;
-    content: string;
-    userId?: string;
-    result: ModerationResult;
-    deliveryHash: string;
-    deliveryTimestamp: string;
-  }): Promise<{ log: ModerationLog; isIdempotent: boolean }> {
-    const existing = await this.moderationLogRepo.findOne({
+  async syncWebhookResult(
+    params: {
+      confessionId: string;
+      content: string;
+      userId?: string;
+      result: ModerationResult;
+      deliveryHash: string;
+      deliveryTimestamp: string;
+    },
+    manager?: EntityManager,
+  ): Promise<{ log: ModerationLog; isIdempotent: boolean }> {
+    const repo = manager
+      ? manager.getRepository(ModerationLog)
+      : this.moderationLogRepo;
+
+    const existing = await repo.findOne({
       where: { confessionId: params.confessionId },
       order: { createdAt: 'DESC' },
     });
@@ -61,7 +68,7 @@ export class ModerationRepositoryService {
 
     const log =
       existing ??
-      this.moderationLogRepo.create({
+      repo.create({
         confessionId: params.confessionId,
         userId: params.userId,
         content: params.content.substring(0, 5000),
@@ -86,7 +93,7 @@ export class ModerationRepositoryService {
     };
 
     return {
-      log: await this.moderationLogRepo.save(log),
+      log: await repo.save(log),
       isIdempotent: false,
     };
   }

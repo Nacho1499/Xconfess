@@ -1,8 +1,10 @@
 import { AdminService } from './admin.service';
 import { ModerationService } from './moderation.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { ReportStatus } from '../entities/report.entity';
+import { Report, ReportStatus } from '../entities/report.entity';
 import { AuditActionType } from '../../audit-log/audit-log.entity';
+import { AnonymousConfession } from '../../confession/entities/confession.entity';
+import { User } from '../../user/entities/user.entity';
 
 function createChainableQB(overrides: Partial<any> = {}) {
   const qb: any = {
@@ -38,6 +40,9 @@ describe('AdminService', () => {
     save: jest.fn(),
     find: jest.fn(),
     count: jest.fn(),
+    manager: {
+      transaction: jest.fn(),
+    },
   };
 
   const confessionRepository: any = {
@@ -63,10 +68,38 @@ describe('AdminService', () => {
     find: jest.fn(),
   };
 
+  const moderationTemplateService: any = {
+    findById: jest.fn().mockResolvedValue(null),
+  };
+
+  const configService: any = {
+    get: jest.fn().mockReturnValue(''),
+  };
+
+  const eventEmitter: any = {
+    emit: jest.fn(),
+  };
+
   let service: AdminService;
 
   beforeEach(() => {
     jest.resetAllMocks();
+    reportRepository.manager.transaction.mockImplementation(async (work: any) =>
+      work({
+        getRepository: (entity: any) => {
+          if (entity === Report) {
+            return reportRepository;
+          }
+          if (entity === AnonymousConfession) {
+            return confessionRepository;
+          }
+          if (entity === User) {
+            return userRepository;
+          }
+          return reportRepository;
+        },
+      }),
+    );
     service = new AdminService(
       reportRepository,
       confessionRepository,
@@ -74,6 +107,9 @@ describe('AdminService', () => {
       userAnonRepository,
       tipRepository,
       moderationService as ModerationService,
+      moderationTemplateService,
+      configService,
+      eventEmitter,
     );
   });
 
@@ -122,7 +158,7 @@ describe('AdminService', () => {
     reportRepository.findOne.mockResolvedValue(report);
     reportRepository.save.mockImplementation(async (r: any) => r);
 
-    const res = await service.resolveReport('r1', 1, 'ok', {} as any);
+    const res = await service.resolveReport('r1', 1, 'ok', null, {} as any);
     expect(res.status).toBe(ReportStatus.RESOLVED);
     expect(moderationService.logAction).toHaveBeenCalledWith(
       1,
@@ -131,6 +167,7 @@ describe('AdminService', () => {
       'r1',
       expect.any(Object),
       'ok',
+      expect.anything(),
       expect.anything(),
     );
   });
@@ -143,6 +180,62 @@ describe('AdminService', () => {
     await expect(
       service.resolveReport('r1', 1, null, undefined),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('resolveReport rolls back status update when audit logging fails', async () => {
+    const committedState = {
+      report: {
+        id: 'r1',
+        status: ReportStatus.PENDING,
+        type: 'spam',
+        confessionId: 'c1',
+        resolvedBy: null,
+        resolvedAt: null,
+        resolutionNotes: null,
+        templateId: null,
+      } as any,
+    };
+
+    reportRepository.manager.transaction.mockImplementationOnce(
+      async (work: any) => {
+        const stagedReport = { ...committedState.report };
+        const txReportRepo = {
+          findOne: jest.fn().mockResolvedValue(stagedReport),
+          save: jest.fn().mockImplementation(async (report: any) => report),
+        };
+
+        const result = await work({
+          getRepository: (entity: any) => {
+            if (entity === Report) {
+              return txReportRepo;
+            }
+            if (entity === AnonymousConfession) {
+              return confessionRepository;
+            }
+            if (entity === User) {
+              return userRepository;
+            }
+            return txReportRepo;
+          },
+        });
+        committedState.report = stagedReport;
+        return result;
+      },
+    );
+
+    (moderationService.logAction as jest.Mock).mockRejectedValueOnce(
+      new Error('Injected audit failure'),
+    );
+
+    await expect(
+      service.resolveReport('r1', 1, 'note', null, {} as any),
+    ).rejects.toThrow('Injected audit failure');
+
+    expect(committedState.report.status).toBe(ReportStatus.PENDING);
+    expect(eventEmitter.emit).not.toHaveBeenCalledWith(
+      'report.updated',
+      expect.anything(),
+    );
   });
 
   it('dismissReport updates status and logs audit action', async () => {
@@ -164,6 +257,7 @@ describe('AdminService', () => {
       'r1',
       expect.any(Object),
       'no violation',
+      expect.anything(),
       expect.anything(),
     );
   });
@@ -199,6 +293,7 @@ describe('AdminService', () => {
       expect.objectContaining({ outcome: 'resolved', action: 'bulk_resolve' }),
       'notes',
       expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -220,6 +315,7 @@ describe('AdminService', () => {
       expect.objectContaining({ outcome: 'skipped' }),
       null,
       undefined,
+      expect.anything(),
     );
   });
 
@@ -240,7 +336,9 @@ describe('AdminService', () => {
     expect(result.skipped).toBe(1);
     expect(result.notFound).toBe(1);
     // One audit entry per requested ID
-    expect((moderationService.logAction as jest.Mock).mock.calls).toHaveLength(3);
+    expect((moderationService.logAction as jest.Mock).mock.calls).toHaveLength(
+      3,
+    );
   });
 
   it('deleteConfession throws if confession missing', async () => {
