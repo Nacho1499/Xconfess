@@ -96,6 +96,13 @@ impl Error {
 #[contract]
 pub struct AnonymousTipping;
 
+/// Schema version constants for upgrade-safe migration.
+/// SCHEMA_VERSION_INITIAL is the implicit version of any contract deployed
+/// before explicit versioning was introduced.  SCHEMA_VERSION_CURRENT is the
+/// version this WASM implements; `migrate()` brings storage up to this level.
+pub const SCHEMA_VERSION_INITIAL: u32 = 1;
+pub const SCHEMA_VERSION_CURRENT: u32 = 2;
+
 #[contracttype]
 #[derive(Clone)]
 enum DataKey {
@@ -105,6 +112,12 @@ enum DataKey {
     IsPaused,
     RateLimitConfig,
     WalletWindow(Address),
+    /// Tracks which schema version has been applied to this contract's storage.
+    /// Absent → SCHEMA_VERSION_INITIAL (pre-versioning deployment).
+    SchemaVersion,
+    /// v2: global count of all successful tip settlements across all recipients.
+    /// Absent (or 0) before `migrate()` is called.
+    GlobalTipCount,
 }
 
 #[contracttype]
@@ -241,6 +254,21 @@ impl AnonymousTipping {
         }
         .publish(&env);
 
+        // Increment global tip counter when the v2 schema is active.
+        // The key is absent on pre-migration contracts; we only write it when
+        // it already exists so that the count is not spuriously created before
+        // the owner has run `migrate()`.
+        if env.storage().instance().has(&DataKey::GlobalTipCount) {
+            let prev_count = env
+                .storage()
+                .instance()
+                .get::<_, u64>(&DataKey::GlobalTipCount)
+                .unwrap_or(0_u64);
+            env.storage()
+                .instance()
+                .set(&DataKey::GlobalTipCount, &prev_count.saturating_add(1));
+        }
+
         Ok(settlement_id)
     }
 
@@ -332,6 +360,78 @@ impl AnonymousTipping {
                 max_tips_per_window: Self::DEFAULT_MAX_TIPS_PER_WINDOW,
                 window_seconds: Self::DEFAULT_RATE_WINDOW_SECONDS,
             })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Schema migration
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Apply all pending schema migrations and return the new schema version.
+    ///
+    /// **Idempotent** — calling this multiple times is always safe; it is a
+    /// no-op when the contract storage is already at `SCHEMA_VERSION_CURRENT`.
+    ///
+    /// Caller must be the contract owner.
+    ///
+    /// ## v1 → v2
+    /// Introduces `GlobalTipCount` (u64): a global counter of all successful
+    /// tip settlements.  Existing settlements are not back-filled — the counter
+    /// starts at 0 on upgrade and increments from the first post-migration tip.
+    /// Off-chain reconciliation should combine the pre-migration event log with
+    /// the on-chain counter when a complete historical count is needed.
+    ///
+    /// ## Rollback
+    /// Schema bumps are additive (new keys only, no existing key is removed or
+    /// retyped).  Rolling back the WASM to v1 is safe: the v1 code simply
+    /// ignores the new keys.  The `SchemaVersion` key will read as absent
+    /// (treated as v1) under the old WASM, which is correct.
+    pub fn migrate(env: Env, caller: Address) -> Result<u32, Error> {
+        caller.require_auth();
+        Self::require_owner(&env, &caller)?;
+
+        let current_version = env
+            .storage()
+            .instance()
+            .get::<_, u32>(&DataKey::SchemaVersion)
+            .unwrap_or(SCHEMA_VERSION_INITIAL);
+
+        if current_version >= SCHEMA_VERSION_CURRENT {
+            return Ok(current_version);
+        }
+
+        // v1 → v2: initialise GlobalTipCount to 0 if not already present.
+        if current_version < 2 {
+            if !env.storage().instance().has(&DataKey::GlobalTipCount) {
+                env.storage()
+                    .instance()
+                    .set(&DataKey::GlobalTipCount, &0_u64);
+            }
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::SchemaVersion, &SCHEMA_VERSION_CURRENT);
+
+        Ok(SCHEMA_VERSION_CURRENT)
+    }
+
+    /// Return the current schema version stored on-chain.
+    /// Returns `SCHEMA_VERSION_INITIAL` for contracts deployed before
+    /// explicit versioning was introduced.
+    pub fn schema_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get::<_, u32>(&DataKey::SchemaVersion)
+            .unwrap_or(SCHEMA_VERSION_INITIAL)
+    }
+
+    /// Return the global count of all successful tip settlements since
+    /// schema v2 migration was applied.  Returns 0 on pre-v2 contracts.
+    pub fn global_tip_count(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get::<_, u64>(&DataKey::GlobalTipCount)
+            .unwrap_or(0_u64)
     }
 
     fn require_owner(env: &Env, caller: &Address) -> Result<(), Error> {

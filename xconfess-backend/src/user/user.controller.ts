@@ -32,7 +32,15 @@ import {
   UpdatePrivacySettingsDto,
   PrivacySettingsResponseDto,
 } from './dto/update-privacy-settings.dto';
-import { ApiOperation, ApiResponse, ApiTags, ApiQuery, ApiParam } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+  ApiQuery,
+  ApiParam,
+  ApiBody,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { PaginatedUserActivityDto } from './dto/user-activity.dto';
 import { ConfessionService } from '../confession/confession.service';
 import { GetUserConfessionsDto } from '../confession/dto/get-user-confessions.dto';
@@ -46,6 +54,7 @@ export interface UserProfileResponse {
   isAnonymous: boolean;
 }
 
+@ApiTags('Auth')
 @Controller('users')
 export class UserController {
   constructor(
@@ -81,6 +90,26 @@ export class UserController {
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Register a new user account' })
+  @ApiBody({ type: RegisterDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Registration successful.',
+    schema: {
+      example: {
+        user: {
+          id: 1,
+          username: 'alice_42',
+          role: 'user',
+          is_active: true,
+          email: 'alice@example.com',
+          createdAt: '2026-04-25T10:00:00.000Z',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Validation error.' })
+  @ApiResponse({ status: 409, description: 'Email or username already in use.' })
   async register(
     @Body() registerDto: RegisterDto,
   ): Promise<{ user: UserResponse }> {
@@ -129,6 +158,20 @@ export class UserController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Log in (alternative endpoint for user login)' })
+  @ApiBody({ type: LoginDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Login successful.',
+    schema: {
+      example: {
+        access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        anonymousUserId: 'anon_7f3a2b1c',
+        user: { id: 1, username: 'alice_42', role: 'user' },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Invalid credentials.' })
   async login(@Body() loginDto: LoginDto): Promise<{
     access_token: string;
     user: UserResponse;
