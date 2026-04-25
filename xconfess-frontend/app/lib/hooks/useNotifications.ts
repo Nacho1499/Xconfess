@@ -31,6 +31,8 @@ export function useNotifications(userId: string): UseNotificationsReturn {
   const [loading, setLoading] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // True after the first successful connect; subsequent connects are reconnects
+  const hasConnectedRef = useRef(false);
   const { handleError } = useApiError({ context: 'Notifications' });
   const debugNotifications =
     process.env.NODE_ENV === 'development' &&
@@ -75,6 +77,13 @@ export function useNotifications(userId: string): UseNotificationsReturn {
     },
     [handleError]
   );
+
+  // Stable ref so socket/visibility effects can call the latest fetchNotifications
+  // without being listed as deps (which would tear down and recreate the socket).
+  const fetchNotificationsRef = useRef(fetchNotifications);
+  useEffect(() => {
+    fetchNotificationsRef.current = fetchNotifications;
+  });
 
   const markAsRead = useCallback(async (notificationId: string) => {
     try {
@@ -137,8 +146,14 @@ export function useNotifications(userId: string): UseNotificationsReturn {
         console.debug('Notifications websocket connected');
       }
       setIsConnected(true);
-      // Join user's notification room
       socket.emit("join-notifications", userId);
+
+      // On reconnect, pull fresh state from the API to catch any notifications
+      // that arrived while the socket was down.
+      if (hasConnectedRef.current) {
+        fetchNotificationsRef.current();
+      }
+      hasConnectedRef.current = true;
     });
 
     socket.on("disconnect", () => {
@@ -178,6 +193,21 @@ export function useNotifications(userId: string): UseNotificationsReturn {
       socket.disconnect();
     };
   }, [userId, playNotificationSound, debugNotifications]);
+
+  // Reconcile when the tab becomes visible again — covers the multi-tab read-all
+  // case and any drift that built up while the tab was in the background.
+  useEffect(() => {
+    if (!userId) return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        fetchNotificationsRef.current();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [userId]);
 
   // Request browser notification permission
   useEffect(() => {
