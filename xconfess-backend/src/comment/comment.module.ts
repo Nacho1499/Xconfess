@@ -1,6 +1,7 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CommentController } from './comment.controller';
+import { CommentAdminController } from './comment-admin.controller';
 import { CommentService } from './comment.service';
 import { Comment } from './entities/comment.entity';
 import { AnonymousContextMiddleware } from '../middleware/anonymous-context.middleware';
@@ -13,7 +14,7 @@ import { AnalyticsModule } from '../analytics/analytics.module';
     TypeOrmModule.forFeature([Comment, ModerationComment, OutboxEvent]),
     AnalyticsModule,
   ],
-  controllers: [CommentController],
+  controllers: [CommentController, CommentAdminController],
   providers: [CommentService],
   exports: [CommentService],
 })

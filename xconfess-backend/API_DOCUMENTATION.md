@@ -289,8 +289,6 @@ The following list matches active `@Controller(...)` + method decorators.
 | POST | `/api/comments/:confessionId` |
 | GET | `/api/comments/by-confession/:confessionId` |
 | DELETE | `/api/comments/:id` |
-| POST | `/api/comments/admin/comments/:id/approve` |
-| POST | `/api/comments/admin/comments/:id/reject` |
 | POST | `/api/messages` |
 | POST | `/api/messages/reply` |
 | GET | `/api/messages/threads` |
@@ -329,6 +327,8 @@ The following list matches active `@Controller(...)` + method decorators.
 | GET | `/api/admin/notifications/dlq` |
 | POST | `/api/admin/notifications/dlq/:jobId/replay` |
 | POST | `/api/admin/notifications/dlq/replay` |
+| POST | `/api/admin/comments/:id/approve` |
+| POST | `/api/admin/comments/:id/reject` |
 | GET | `/api/admin/dlq` |
 | GET | `/api/admin/dlq/:id` |
 | POST | `/api/admin/dlq/:id/retry` |
