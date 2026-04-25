@@ -40,6 +40,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     isAuthenticated: false,
     isLoading: true,
     error: null,
+    isSessionExpired: false,
   });
 
 
@@ -84,15 +85,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isAuthenticated: true,
         isLoading: false,
         error: null,
+        isSessionExpired: false,
       });
-    } catch {
+    } catch (error) {
       // Not authenticated or session expired
       setStoreUser(null);
+      const isExpired = error && typeof error === 'object' && 'status' in error && 
+                       (error as any).status === 401;
       setState({
         user: null,
         isAuthenticated: false,
         isLoading: false,
         error: null, // Don't show error for initial check
+        isSessionExpired: isExpired,
       });
     } finally {
       checkInProgress.current = false;
@@ -125,6 +130,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isAuthenticated: true,
         isLoading: false,
         error: null,
+        isSessionExpired: false,
       });
       return response.user;
     } catch (error) {
@@ -133,6 +139,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isAuthenticated: false,
         isLoading: false,
         error: getErrorMessage(error),
+        isSessionExpired: false,
       });
       throw error;
     }
@@ -156,6 +163,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isAuthenticated: false,
         isLoading: false,
         error: getErrorMessage(error),
+        isSessionExpired: false,
       });
       throw error;
     }
@@ -174,6 +182,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       isAuthenticated: false,
       isLoading: false,
       error: null,
+      isSessionExpired: false,
     });
   };
 

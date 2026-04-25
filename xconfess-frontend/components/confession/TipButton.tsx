@@ -1,19 +1,12 @@
 /**
- * AnchorButton.tsx
- * Issue #196 – Block anchor submission on network mismatch with actionable copy
- * Issue #198 – Prevent duplicate anchor verification submits
- *
- * Uses the real useStellarWallet contract:
- *   isLoading       (not isConnecting)
- *   isReady         (wallet connected + correct network)
- *   readinessError  (human-readable reason isReady is false)
- *   anchor(content) (not signAndSubmitAnchorTx)
+ * TipButton.tsx
+ * Unified wallet and tipping implementation
  */
 
 "use client";
 
 import React, { useCallback, useRef, useState } from "react";
-import { useStellarWallet } from "@/app/lib/hooks/useStellarWallet";
+import { useStellarWallet } from "@/lib/hooks/useStellarWallet";
 
 interface AnchorButtonProps {
   confessionId: string;
