@@ -8,6 +8,7 @@ import {
   type TipStats,
 } from "@/lib/services/tipping.service";
 import { useWallet } from "@/lib/hooks/useWallet";
+import { getWalletCTAState } from "@/lib/hooks/useWalletCTAState";
 import { useActivityStore } from "@/app/lib/store/activity.store";
 import { v4 as uuidv4 } from "uuid";
 
@@ -33,8 +34,9 @@ export const TipButton = ({
   const [pendingTxHash, setPendingTxHash] = useState<string | null>(null);
   const [stats, setStats] = useState<TipStats | null>(initialStats || null);
 
-  const { isConnected, isReady, connect } =
-    useWallet();
+  const wallet = useWallet();
+  const { isConnected, connect } = wallet;
+  const walletCTA = getWalletCTAState(wallet, { extraDisabled: isSending });
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -167,6 +169,7 @@ export const TipButton = ({
       <button
         onClick={() => setIsOpen(!isOpen)}
         disabled={!recipientAddress}
+        aria-label="Tip confession"
         className="flex items-center gap-2 px-4 py-2 rounded-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50"
       >
         💰 {tipCount > 0 && tipCount}
@@ -201,13 +204,30 @@ export const TipButton = ({
             className="w-full p-2 bg-zinc-900 text-white mt-2"
           />
 
+          {walletCTA.status === "not-installed" && (
+            <div className="text-xs text-yellow-400 mt-2">
+              {walletCTA.guidance}
+            </div>
+          )}
+
           <button
             onClick={handleTip}
-            disabled={isSending || (isConnected && !isReady)}
-            className="w-full mt-3 bg-purple-600 py-2 rounded"
+            disabled={walletCTA.disabled}
+            className="w-full mt-3 bg-purple-600 py-2 rounded disabled:opacity-50"
+            aria-label={isSending ? "Sending tip" : walletCTA.status === "not-connected" ? "Connect Wallet to Tip" : `Send ${tipAmount} XLM tip`}
           >
-            {isSending ? "Sending..." : `Tip ${tipAmount} XLM`}
+            {isSending
+              ? "Sending..."
+              : walletCTA.status === "not-connected"
+                ? "Connect Wallet to Tip"
+                : `Tip ${tipAmount} XLM`}
           </button>
+
+          {walletCTA.status === "not-ready" && (
+            <div className="text-xs text-orange-400 mt-2">
+              {walletCTA.guidance}
+            </div>
+          )}
 
           <div className="text-xs text-gray-400 mt-3">
             {totalAmount.toFixed(2)} XLM • {tipCount} tips
