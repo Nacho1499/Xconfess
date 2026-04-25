@@ -121,7 +121,17 @@ export class ReportsService {
 
       const existingReport = await qb.getOne();
       if (existingReport) {
-        throw new BadRequestException(DUPLICATE_REPORT_MESSAGE);
+        // Return the existing report for idempotent replay rather than an error.
+        // This gives callers a deterministic response for retried submissions
+        // without creating duplicate moderation records.
+        this.logger.debug(
+          `Deduplicated report for confession ${confessionId} by ${
+            reporterId !== null
+              ? `reporter ${reporterId}`
+              : `anon ${context?.anonymousUserId ?? 'unknown'}`
+          } — returning existing report ${existingReport.id}`,
+        );
+        return existingReport;
       }
 
       // 3️⃣ Persist — DB unique index catches any concurrent duplicates
@@ -142,8 +152,17 @@ export class ReportsService {
         savedReport = await reportRepo.save(report);
       } catch (err: unknown) {
         if (isDuplicateReportConstraintViolation(err)) {
-          // Could be the idempotency index or the dedupe index — both are safe
-          // to surface as the duplicate-report message to the caller.
+          // Concurrent duplicate hit the DB unique index — look up and return
+          // the winner row so the caller gets a deterministic response.
+          const concurrent = await reportRepo.findOne({
+            where: {
+              confessionId,
+              ...(idempotencyKey && reporterId !== null
+                ? { idempotencyKey, reporterId }
+                : {}),
+            },
+          });
+          if (concurrent) return concurrent;
           throw new BadRequestException(DUPLICATE_REPORT_MESSAGE);
         }
         throw err;

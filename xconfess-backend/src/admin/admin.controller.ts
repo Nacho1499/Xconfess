@@ -157,13 +157,12 @@ export class AdminController {
     @GetUser('id') adminId: number,
     @Req() req: AuthedRequest,
   ) {
-    const count = await this.adminService.bulkResolveReports(
+    return this.adminService.bulkResolveReports(
       dto.reportIds,
       adminId,
       dto.notes || null,
       req,
     );
-    return { resolved: count };
   }
 
   // Confessions
@@ -291,6 +290,15 @@ export class AdminController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteTemplate(@Param('id') id: string) {
     await this.moderationTemplateService.delete(parseInt(id, 10));
+  }
+
+  // Operator anchor & tip lookup (Issue #778)
+  @Get('lookup/anchor-tip')
+  async lookupAnchorAndTip(
+    @Query('txHash') txHash?: string,
+    @Query('confessionId') confessionId?: string,
+  ) {
+    return this.adminService.lookupAnchorAndTip({ txHash, confessionId });
   }
 
   // Analytics

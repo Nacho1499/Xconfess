@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddIdempotencyKeyToReports1700000000000 implements MigrationInterface {
-  name = 'AddIdempotencyKeyToReports1700000000000';
+export class AddIdempotencyKeyToReports20260425000001 implements MigrationInterface {
+  name = 'AddIdempotencyKeyToReports20260425000001';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Add idempotency_key column (nullable — older rows won't have one)

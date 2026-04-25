@@ -17,6 +17,7 @@ import { UserAnonymousUser } from '../user/entities/user-anonymous-link.entity';
 import { WebSocketLogger } from '../websocket/websocket.logger';
 import { WsRolesGuard } from '../auth/guards/ws-roles.guard';
 import { Reflector } from '@nestjs/core';
+import { Tip } from '../tipping/entities/tip.entity';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { Reflector } from '@nestjs/core';
       AnonymousConfession,
       User,
       UserAnonymousUser,
+      Tip,
     ]),
     AuthModule,
     UserModule,
