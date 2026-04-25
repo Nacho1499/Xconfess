@@ -9,6 +9,7 @@ import {
   Get,
   UseGuards,
   UnauthorizedException,
+  HttpException,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
@@ -32,7 +33,7 @@ export class AuthController {
   @RateLimit(5, 300)
   async login(
     @Body() loginDto: LoginDto,
-  ): Promise<{ access_token: string; user: any }> {
+  ): Promise<{ access_token: string; user: any; anonymousUserId: string }> {
     try {
       const result = await this.authService.login(
         loginDto.email,
@@ -45,11 +46,10 @@ export class AuthController {
 
       return result;
     } catch (error) {
-      if (error instanceof UnauthorizedException) {
+      if (error instanceof HttpException) {
         throw error;
       }
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       throw new BadRequestException('Login failed: ' + errorMessage);
     }
   }

@@ -4,6 +4,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ThrottlerExceptionFilter } from './common/filters/throttler-exception.filter';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import compression from 'compression';
 import helmet from 'helmet';
@@ -78,6 +79,7 @@ async function bootstrap() {
   );
 
   app.useGlobalFilters(
+    new AllExceptionsFilter(),
     new HttpExceptionFilter(),
     new ThrottlerExceptionFilter(),
   );

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useStellarWallet } from "@/app/lib/hooks/useStellarWallet";
+import { useStellarWallet } from "@/lib/hooks/useStellarWallet";
+import { getWalletCTAState } from "@/lib/hooks/useWalletCTAState";
 import { Button } from "@/app/components/ui/button";
 import {
   Loader2,
@@ -39,6 +40,13 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
     anchor,
     isLoading,
   } = useStellarWallet();
+  const walletCTA = getWalletCTAState({
+    isFreighterInstalled: isAvailable,
+    isConnected,
+    isReady,
+    readinessError,
+    isLoading,
+  });
 
   const addActivity = useActivityStore((s) => s.addActivity);
   const updateActivity = useActivityStore((s) => s.updateActivity);
@@ -58,6 +66,7 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
   };
 
   const handleAnchor = async () => {
+    if (isAnchoring || isLoading) return;
     setError(null);
 
     if (!isConnected) {
@@ -157,11 +166,10 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
     );
   }
 
-  // ❌ Wallet not available
-  if (!isAvailable) {
+  if (walletCTA.status === "not-installed") {
     return (
       <div className={cn("text-xs text-zinc-500", className)}>
-        Wallet required
+        {walletCTA.guidance}
       </div>
     );
   }
@@ -172,13 +180,18 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
         variant="outline"
         size="sm"
         onClick={handleAnchor}
-        disabled={isAnchoring || isLoading || (isConnected && !isReady)}
+        disabled={isAnchoring || walletCTA.disabled}
         className="h-7 px-2 text-xs"
       >
         {isAnchoring || isLoading ? (
           <>
             <Loader2 className="h-3 w-3 mr-1 animate-spin" />
             Anchoring...
+          </>
+        ) : walletCTA.status === "not-connected" ? (
+          <>
+            <Anchor className="h-3 w-3 mr-1" />
+            Connect Wallet to Anchor
           </>
         ) : (
           <>
@@ -192,9 +205,9 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
         <div className="text-xs text-red-400">{error}</div>
       )}
 
-      {isConnected && !isReady && !error && (
+      {walletCTA.status === "not-ready" && !error && (
         <div className="text-xs text-orange-400">
-          {readinessError}
+          {walletCTA.guidance}
         </div>
       )}
     </div>

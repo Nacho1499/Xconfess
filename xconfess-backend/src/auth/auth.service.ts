@@ -14,7 +14,7 @@ import { PasswordResetService } from './password-reset.service';
 import { AnonymousUserService } from '../user/anonymous-user.service';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
-import { UserResponse } from '../user/user.controller';
+import { UserResponse } from '../user/dto/user-response.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { CryptoUtil } from '../common/crypto.util';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
@@ -22,6 +22,7 @@ import { UserRole } from '../user/entities/user.entity';
 import { AppException } from '../common/errors/app-exception';
 import { ErrorCode } from '../common/errors/error-codes';
 import { HttpStatus } from '@nestjs/common';
+import { getDefaultAdminStellarInvocationScopes } from '../stellar/stellar-invocation-policy';
 
 @Injectable()
 export class AuthService {
@@ -93,7 +94,8 @@ export class AuthService {
     const anonymousUser =
       await this.anonymousUserService.getOrCreateForUserSession(user.id);
     const role = user.role || UserRole.USER;
-    const scopes = role === UserRole.ADMIN ? ['stellar:invoke-contract'] : [];
+    const scopes =
+      role === UserRole.ADMIN ? getDefaultAdminStellarInvocationScopes() : [];
     const payload: JwtPayload = {
       email: user.email,
       sub: user.id,

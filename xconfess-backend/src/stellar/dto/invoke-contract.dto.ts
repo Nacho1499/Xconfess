@@ -10,19 +10,19 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import {
+  STELLAR_INVOKE_ALLOWED_OPERATIONS,
+  StellarInvocationOperation,
+} from '../stellar-invocation-policy';
 
 /** Operations permitted via POST /stellar/invoke-contract (server-signed). */
-export const STELLAR_INVOKE_ALLOWED_OPERATIONS = ['anchor_confession'] as const;
-export type StellarInvokeAllowedOperation =
-  (typeof STELLAR_INVOKE_ALLOWED_OPERATIONS)[number];
-
 export class InvokeContractDto {
   @ApiProperty({
     enum: STELLAR_INVOKE_ALLOWED_OPERATIONS,
     description: 'Allowlisted Soroban operation',
   })
   @IsIn([...STELLAR_INVOKE_ALLOWED_OPERATIONS])
-  operation: StellarInvokeAllowedOperation;
+  operation: StellarInvocationOperation;
 
   @ApiProperty({
     description:

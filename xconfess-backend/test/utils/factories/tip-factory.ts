@@ -1,5 +1,5 @@
 import { faker } from '@faker-js/faker/.';
-import { Tip } from '../../../src/tipping/entities/tip.entity';
+import { Tip, TipVerificationStatus } from '../../../src/tipping/entities/tip.entity';
 import { AnonymousConfession } from '../../../src/confession/entities/confession.entity';
 import { Gender } from '../../../src/confession/dto/get-confessions.dto';
 
@@ -28,6 +28,7 @@ export class TipFactory {
     tip.txId = this.generateValidTxHash();
     tip.senderAddress = this.generateStellarAddress(); // Can be null for anonymous
     tip.createdAt = faker.date.recent({ days: 1 }); // Recent tip
+    tip.verificationStatus = TipVerificationStatus.PENDING;
     
     return { ...tip, ...overrides } as Tip;
   }
@@ -41,6 +42,8 @@ export class TipFactory {
   static buildVerifiedTip(confessionId?: string, overrides: Partial<Tip> = {}): Tip {
     const tip = this.buildPendingTip(confessionId, overrides);
     tip.createdAt = faker.date.past({ days: 30 }); // Verified in the past
+    tip.verificationStatus = TipVerificationStatus.VERIFIED;
+    tip.verifiedAt = faker.date.recent({ days: 1 });
     return tip;
   }
 
@@ -68,6 +71,8 @@ export class TipFactory {
     tip.txId = this.generateInvalidTxHash(); // Invalid hash
     tip.senderAddress = this.generateStellarAddress();
     tip.createdAt = faker.date.recent({ days: 1 });
+    tip.verificationStatus = TipVerificationStatus.REJECTED;
+    tip.rejectionReason = 'invalid_transaction';
     
     return { ...tip, ...overrides } as Tip;
   }

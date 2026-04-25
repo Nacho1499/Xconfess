@@ -306,5 +306,93 @@ describe('Login and Profile Route Parity (e2e)', () => {
       expect(loginUser.email).toBe(usersProfileRes.body.email);
       expect(loginUser.email).toBe(authProfileRes.body.email);
     });
+
+    it('both routes return all canonical UserResponse fields with equal values', async () => {
+      const [usersRes, authRes] = await Promise.all([
+        getProfileViaUsersRoute(accessToken),
+        getProfileViaAuthRoute(accessToken),
+      ]);
+
+      // Every top-level field of the canonical schema must be present on both routes.
+      const topLevelFields = [
+        'id',
+        'username',
+        'role',
+        'is_active',
+        'email',
+        'notificationPreferences',
+        'privacy',
+        'createdAt',
+        'updatedAt',
+      ];
+      for (const field of topLevelFields) {
+        expect(usersRes.body).toHaveProperty(field);
+        expect(authRes.body).toHaveProperty(field);
+      }
+
+      // The privacy sub-object must contain every expected flag.
+      const privacyFields = [
+        'isDiscoverable',
+        'canReceiveReplies',
+        'showReactions',
+        'dataProcessingConsent',
+      ];
+      for (const field of privacyFields) {
+        expect(usersRes.body.privacy).toHaveProperty(field);
+        expect(authRes.body.privacy).toHaveProperty(field);
+      }
+
+      // Values must be identical across both routes for the same caller.
+      for (const field of topLevelFields) {
+        expect(usersRes.body[field]).toEqual(authRes.body[field]);
+      }
+    });
+
+    it('both routes return HTTP 401 when the user is deactivated after the token is issued', async () => {
+      // Token obtained in beforeEach while user was active; deactivate now.
+      await userRepository.update({ username: TEST_USERNAME }, { is_active: false });
+
+      const [usersRes, authRes] = await Promise.all([
+        getProfileViaUsersRoute(accessToken),
+        getProfileViaAuthRoute(accessToken),
+      ]);
+
+      expect(usersRes.status).toBe(401);
+      expect(authRes.status).toBe(401);
+    });
+
+    it('both routes return HTTP 401 when the user record is deleted after the token is issued', async () => {
+      // Token obtained in beforeEach while user existed; delete now.
+      await userRepository.delete({ username: TEST_USERNAME });
+
+      const [usersRes, authRes] = await Promise.all([
+        getProfileViaUsersRoute(accessToken),
+        getProfileViaAuthRoute(accessToken),
+      ]);
+
+      expect(usersRes.status).toBe(401);
+      expect(authRes.status).toBe(401);
+    });
+
+    it('neither route exposes internal fields (reset tokens, raw ciphertext)', async () => {
+      const [usersRes, authRes] = await Promise.all([
+        getProfileViaUsersRoute(accessToken),
+        getProfileViaAuthRoute(accessToken),
+      ]);
+
+      const internalFields = [
+        'password',
+        'resetPasswordToken',
+        'resetPasswordExpires',
+        'emailEncrypted',
+        'emailIv',
+        'emailTag',
+        'emailHash',
+      ];
+      for (const field of internalFields) {
+        expect(usersRes.body).not.toHaveProperty(field);
+        expect(authRes.body).not.toHaveProperty(field);
+      }
+    });
   });
 });

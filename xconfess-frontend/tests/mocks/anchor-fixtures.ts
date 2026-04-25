@@ -1,4 +1,4 @@
-import type { StellarWalletState } from "@/app/lib/hooks/useStellarWallet";
+import type { StellarWalletState } from "@/lib/hooks/useStellarWallet";
 
 /**
  * Shared anchor fixtures for reproducible frontend testing

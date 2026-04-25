@@ -4,7 +4,7 @@
  * Uses Zustand-style store (adapt to your actual store library)
  */
 
-import { fetchTipStatus, TipStatus } from "@/services/tipping.service";
+import { fetchTipStatus, TipStatus } from "@/lib/services/tipping.service";
 import { create } from "zustand";
 
 export type AnchorStatus = "pending" | "confirmed" | "failed" | "stale_pending";

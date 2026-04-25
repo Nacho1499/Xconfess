@@ -46,6 +46,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     isAuthenticated: false,
     isLoading: true,
     error: null,
+    isSessionExpired: false,
   });
 
   // Guard against concurrent checkAuth calls (race-condition fix)
@@ -115,6 +116,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isAuthenticated: true,
         isLoading: false,
         error: null,
+        isSessionExpired: false,
       });
     } catch (error) {
       // Handle TERMINAL auth errors (invalid session, forbidden, etc.)
@@ -161,6 +163,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isAuthenticated: true,
         isLoading: false,
         error: null,
+        isSessionExpired: false,
       });
       return response.user;
     } catch (error) {
@@ -174,6 +177,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isAuthenticated: false,
         isLoading: false,
         error: getErrorMessage(error),
+        isSessionExpired: false,
       });
       throw error;
     }
@@ -197,6 +201,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         isAuthenticated: false,
         isLoading: false,
         error: getErrorMessage(error),
+        isSessionExpired: false,
       });
       throw error;
     }
@@ -215,6 +220,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       isAuthenticated: false,
       isLoading: false,
       error: null,
+      isSessionExpired: false,
     });
   };
 

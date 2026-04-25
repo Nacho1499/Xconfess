@@ -67,6 +67,9 @@ export const envValidationSchema = Joi.object({
   TIPPING_SYSTEM_CONTRACT_ID: Joi.string().optional(),
   STELLAR_SERVER_SECRET: Joi.string().optional(),
 
+  // ── Tipping SLA ────────────────────────────────────────────────────────
+  TIP_VERIFICATION_STALE_THRESHOLD_MINUTES: Joi.number().min(1).default(30),
+
   // ── Email (primary) ──────────────────────────────────────────────────
   MAIL_HOST: Joi.string().default('smtp.ethereal.email'),
   MAIL_PORT: Joi.number().port().default(587),

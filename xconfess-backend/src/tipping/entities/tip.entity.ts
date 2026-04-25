@@ -11,6 +11,7 @@ import { AnonymousConfession } from '../../confession/entities/confession.entity
 
 export enum TipVerificationStatus {
   PENDING = 'pending',
+  STALE_PENDING = 'stale_pending',
   VERIFIED = 'verified',
   REJECTED = 'rejected',
   CONFLICT = 'conflict',
