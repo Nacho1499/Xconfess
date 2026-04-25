@@ -20,9 +20,15 @@ export const ReactionButton = ({
 }: Props) => {
   const [isAnimating, setIsAnimating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { addReaction, isPending } = useReactions({
+  const { addReaction, isPending, optimisticState } = useReactions({
     initialCounts: { like: 0, love: 0, [type]: count },
   });
+
+  // Use optimistic values when a mutation is in flight so that both the
+  // count and the selected (active) state update immediately on click and
+  // roll back cleanly if the server rejects the request.
+  const displayCount = optimisticState?.counts[type] ?? count;
+  const computedIsActive = optimisticState?.userReaction === type || isActive;
 
   const react = async () => {
     // Clear any previous errors
@@ -36,9 +42,9 @@ export const ReactionButton = ({
     }
   };
 
-  const label = isActive
-    ? `Reacted with ${type}, current count ${count}`
-    : `React with ${type}, current count ${count}`;
+  const label = computedIsActive
+    ? `Reacted with ${type}, current count ${displayCount}`
+    : `React with ${type}, current count ${displayCount}`;
 
   return (
     <div className="relative">
@@ -46,7 +52,7 @@ export const ReactionButton = ({
         onClick={react}
         disabled={isPending}
         aria-label={label}
-        aria-pressed={isActive}
+        aria-pressed={computedIsActive}
         title={error || undefined}
         className={cn(
           "relative flex items-center gap-2 px-4 py-2 rounded-full",
@@ -55,7 +61,7 @@ export const ReactionButton = ({
           "bg-zinc-800 hover:bg-zinc-700",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500",
           "active:scale-95",
-          isActive && "bg-pink-600 text-white",
+          computedIsActive && "bg-pink-600 text-white",
           isAnimating && "animate-reaction-bounce",
           error && "ring-2 ring-red-500"
         )}
@@ -64,9 +70,9 @@ export const ReactionButton = ({
           {type === "like" ? "👍" : "❤️"}
         </span>
 
-        <span className="text-sm font-medium">{count}</span>
+        <span className="text-sm font-medium">{displayCount}</span>
       </button>
-      
+
       {error && (
         <div role="alert" className="absolute top-full mt-1 left-1/2 -translate-x-1/2 whitespace-nowrap">
           <div className="text-xs text-red-500 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded">
