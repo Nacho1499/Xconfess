@@ -21,3 +21,7 @@ path = "tests/adversarial.rs"
 [[test]]
 name = "benchmarks"
 path = "tests/benchmarks.rs"
+
+[[test]]
+name = "migration"
+path = "tests/migration.rs"

@@ -31,6 +31,10 @@ const CAPABILITY_META_V1: Symbol = symbol_short!("meta_v1");
 const CAPABILITY_ADMIN_V1: Symbol = symbol_short!("adminv1");
 const CAPABILITY_PAUSE_V1: Symbol = symbol_short!("pausev1");
 
+/// Schema version constants for upgrade-safe migration.
+pub const ANCHOR_SCHEMA_VERSION_INITIAL: u32 = 1;
+pub const ANCHOR_SCHEMA_VERSION_CURRENT: u32 = 2;
+
 /// Storage keys for confession-anchor state
 #[contracttype]
 #[derive(Clone)]
@@ -39,6 +43,13 @@ pub enum DataKey {
     Owner,
     /// Admin set: Map<Address, ()>
     Admins,
+    /// Tracks which schema version has been applied to this contract's storage.
+    /// Absent → ANCHOR_SCHEMA_VERSION_INITIAL (pre-versioning deployment).
+    SchemaVersion,
+    /// v2: timestamp of the most recently successfully anchored confession.
+    /// Absent before `migrate()` is called; 0 means no anchor has occurred
+    /// since migration (i.e. pre-migration anchors are not back-filled).
+    LastAnchorTimestamp,
 }
 
 #[contracttype]
@@ -216,6 +227,19 @@ impl ConfessionAnchor {
         // Increment confession count.
         let current_count = get_count(&env);
         set_count(&env, current_count + 1);
+
+        // Track last anchor timestamp when v2 schema is active.
+        // We only write when the key already exists so we don't spuriously
+        // create it before the owner has run `migrate()`.
+        if env
+            .storage()
+            .instance()
+            .has(&DataKey::LastAnchorTimestamp)
+        {
+            env.storage()
+                .instance()
+                .set(&DataKey::LastAnchorTimestamp, &timestamp);
+        }
 
         // Emit ConfessionAnchored event:
         // topics: ("confession_anchor", hash)
@@ -419,6 +443,77 @@ impl ConfessionAnchor {
     /// Revoke operator role from an address (owner or admin).
     pub fn revoke_operator(env: Env, caller: Address, target: Address) -> Result<(), Error> {
         access_control::revoke_operator(&env, &caller, &target).map_err(Into::into)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Schema migration
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Apply all pending schema migrations and return the new schema version.
+    ///
+    /// **Idempotent** — calling this multiple times is safe; it is a no-op
+    /// when storage is already at `ANCHOR_SCHEMA_VERSION_CURRENT`.
+    ///
+    /// Caller must be the contract owner.
+    ///
+    /// ## v1 → v2
+    /// Introduces `LastAnchorTimestamp` (u64): the timestamp of the most
+    /// recent successful anchor.  Pre-migration anchors are not back-filled —
+    /// the value starts at 0 and is updated from the first post-migration
+    /// `anchor_confession` call.
+    ///
+    /// ## Rollback
+    /// Schema bumps are purely additive.  The v1 WASM simply ignores any
+    /// `SchemaVersion` or `LastAnchorTimestamp` keys left by the migration.
+    pub fn migrate(env: Env, caller: Address) -> Result<u32, Error> {
+        access_control::require_owner(&env, &caller).map_err(Error::from)?;
+
+        let current_version = env
+            .storage()
+            .instance()
+            .get::<_, u32>(&DataKey::SchemaVersion)
+            .unwrap_or(ANCHOR_SCHEMA_VERSION_INITIAL);
+
+        if current_version >= ANCHOR_SCHEMA_VERSION_CURRENT {
+            return Ok(current_version);
+        }
+
+        // v1 → v2: initialise LastAnchorTimestamp to 0 if not already present.
+        if current_version < 2 {
+            if !env
+                .storage()
+                .instance()
+                .has(&DataKey::LastAnchorTimestamp)
+            {
+                env.storage()
+                    .instance()
+                    .set(&DataKey::LastAnchorTimestamp, &0_u64);
+            }
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::SchemaVersion, &ANCHOR_SCHEMA_VERSION_CURRENT);
+
+        Ok(ANCHOR_SCHEMA_VERSION_CURRENT)
+    }
+
+    /// Return the current schema version stored on-chain.
+    /// Returns `ANCHOR_SCHEMA_VERSION_INITIAL` for pre-versioning deployments.
+    pub fn schema_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get::<_, u32>(&DataKey::SchemaVersion)
+            .unwrap_or(ANCHOR_SCHEMA_VERSION_INITIAL)
+    }
+
+    /// Return the timestamp of the last successfully anchored confession since
+    /// schema v2 migration was applied.  Returns 0 on pre-v2 contracts.
+    pub fn last_anchor_timestamp(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get::<_, u64>(&DataKey::LastAnchorTimestamp)
+            .unwrap_or(0_u64)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
