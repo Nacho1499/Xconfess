@@ -10,6 +10,11 @@ import NotificationsPage from '../page';
 import { adminApi } from '@/app/lib/api/admin';
 import type { FailedJobsResponse } from '@/app/lib/types/notification-jobs';
 
+const mockToast = {
+  success: jest.fn(),
+  error: jest.fn(),
+};
+
 // Mock the admin API
 jest.mock('@/app/lib/api/admin', () => ({
   adminApi: {
@@ -21,6 +26,10 @@ jest.mock('@/app/lib/api/admin', () => ({
 // Mock ErrorBoundary to simplify testing
 jest.mock('@/app/components/common/ErrorBoundary', () => ({
   ErrorBoundary: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
+jest.mock('@/app/components/common/Toast', () => ({
+  useGlobalToast: () => mockToast,
 }));
 
 // Mock ConfirmDialog
@@ -389,6 +398,9 @@ describe('NotificationsPage', () => {
       await waitFor(() => {
         expect(adminApi.replayFailedNotificationJob).toHaveBeenCalledWith('job-123');
       });
+      expect(mockToast.success).toHaveBeenCalledWith(
+        'Failed notification job replay queued.',
+      );
     });
 
     it('should not call replay API when cancelled', async () => {

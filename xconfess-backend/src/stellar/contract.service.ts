@@ -9,6 +9,7 @@ import {
 import { handleStellarError } from './utils/stellar-error.handler';
 import { encodeContractArgs, ContractArg } from './utils/parameter.encoder';
 import { InvokeContractDto } from './dto/invoke-contract.dto';
+import { getStellarInvocationPolicy } from './stellar-invocation-policy';
 
 @Injectable()
 export class ContractService {
@@ -27,11 +28,17 @@ export class ContractService {
     dto: InvokeContractDto,
     verifiedSignerPublicKey: string,
   ): IContractInvocation {
-    switch (dto.operation) {
+    const policy = getStellarInvocationPolicy(dto.operation);
+
+    if (!policy) {
+      throw new Error(`Unhandled allowlisted operation: ${dto.operation}`);
+    }
+
+    switch (policy.operation) {
       case 'anchor_confession':
         return {
-          contractId: this.stellarConfig.getContractId('confessionAnchor'),
-          functionName: 'anchor_confession',
+          contractId: this.stellarConfig.getContractId(policy.contractName),
+          functionName: policy.functionName,
           args: [
             { type: 'bytes', value: Buffer.from(dto.confessionHash!, 'hex') },
             { type: 'u64', value: dto.timestamp! },
@@ -39,7 +46,7 @@ export class ContractService {
           sourceAccount: verifiedSignerPublicKey,
         };
       default: {
-        const _never: never = dto.operation;
+        const _never: never = policy.operation;
         throw new Error(`Unhandled allowlisted operation: ${_never}`);
       }
     }

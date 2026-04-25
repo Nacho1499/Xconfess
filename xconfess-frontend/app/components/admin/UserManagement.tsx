@@ -4,21 +4,16 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApi, User } from '@/app/lib/api/admin';
 import { queryKeys } from '@/app/lib/api/queryKeys';
-import { ConfirmDialog } from '@/app/components/admin/ConfirmDialog';
-import { useGlobalToast } from '@/app/components/common/Toast';
+import { useAdminConfirmation } from '@/app/components/admin/useAdminConfirmation';
 
 export default function UserManagement() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [pendingAction, setPendingAction] = useState<{
-    type: 'ban' | 'unban';
-    user: User;
-  } | null>(null);
   const [page, setPage] = useState(1);
   const limit = 20;
 
   const queryClient = useQueryClient();
-  const toast = useGlobalToast();
+  const { openConfirmation, confirmDialog } = useAdminConfirmation();
 
   const { data, isLoading } = useQuery({
     queryKey: queryKeys.admin.users.search(searchQuery, page),
@@ -29,70 +24,54 @@ export default function UserManagement() {
   const banMutation = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       adminApi.banUser(id, reason),
-    onSuccess: (_, variables) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.admin.users.all() });
       setSelectedUser(null);
-      toast.success('User banned.', {
-        action: {
-          label: 'Undo',
-          onClick: () => unbanMutation.mutate(variables.id),
-        },
-      });
-    },
-    onError: () => {
-      toast.error('Failed to ban user.');
     },
   });
 
   const unbanMutation = useMutation({
     mutationFn: (id: string) => adminApi.unbanUser(id),
-    onSuccess: (_, id) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.admin.users.all() });
       setSelectedUser(null);
-      toast.success('User unbanned.', {
-        action: {
-          label: 'Undo',
-          onClick: () => banMutation.mutate({ id }),
-        },
-      });
-    },
-    onError: () => {
-      toast.error('Failed to unban user.');
     },
   });
 
   const handleBan = (user: User) => {
-    setPendingAction({ type: 'ban', user });
+    openConfirmation({
+      title: `Ban ${user.username}?`,
+      description: 'This will block the user from signing in and using the platform.',
+      confirmLabel: 'Ban User',
+      variant: 'danger',
+      action: () => banMutation.mutateAsync({ id: user.id.toString() }),
+      successMessage: 'User banned.',
+      successOptions: {
+        action: {
+          label: 'Undo',
+          onClick: () => unbanMutation.mutate(user.id.toString()),
+        },
+      },
+      errorMessage: 'Failed to ban user.',
+    });
   };
 
   const handleUnban = (user: User) => {
-    setPendingAction({ type: 'unban', user });
+    openConfirmation({
+      title: `Unban ${user.username}?`,
+      description: 'This will restore the user account.',
+      confirmLabel: 'Unban User',
+      action: () => unbanMutation.mutateAsync(user.id.toString()),
+      successMessage: 'User unbanned.',
+      successOptions: {
+        action: {
+          label: 'Undo',
+          onClick: () => banMutation.mutate({ id: user.id.toString() }),
+        },
+      },
+      errorMessage: 'Failed to unban user.',
+    });
   };
-
-  const confirmPendingAction = () => {
-    if (!pendingAction) return;
-
-    if (pendingAction.type === 'ban') {
-      banMutation.mutate({ id: pendingAction.user.id.toString() });
-    } else {
-      unbanMutation.mutate(pendingAction.user.id.toString());
-    }
-    setPendingAction(null);
-  };
-
-  const pendingUser = pendingAction?.user;
-  const pendingTitle =
-    pendingAction?.type === 'ban'
-      ? `Ban ${pendingUser?.username}?`
-      : pendingAction?.type === 'unban'
-        ? `Unban ${pendingUser?.username}?`
-        : '';
-  const pendingDescription =
-    pendingAction?.type === 'ban'
-      ? 'This will block the user from signing in and using the platform.'
-      : pendingAction?.type === 'unban'
-        ? 'This will restore the user account.'
-        : '';
 
   const users = data?.users || [];
   const total = data?.total || 0;
@@ -100,18 +79,7 @@ export default function UserManagement() {
 
   return (
     <div className="space-y-4">
-      <ConfirmDialog
-        open={pendingAction !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingAction(null);
-        }}
-        title={pendingTitle}
-        description={pendingDescription}
-        confirmLabel={pendingAction?.type === 'ban' ? 'Ban User' : 'Unban User'}
-        variant={pendingAction?.type === 'ban' ? 'danger' : 'default'}
-        loading={banMutation.isPending || unbanMutation.isPending}
-        onConfirm={confirmPendingAction}
-      />
+      {confirmDialog}
 
       {/* Search */}
       <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-4">

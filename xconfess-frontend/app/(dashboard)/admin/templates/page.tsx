@@ -13,8 +13,8 @@ import {
   AlertCircle,
   Home,
 } from 'lucide-react';
-import { ConfirmDialog } from '@/app/components/admin/ConfirmDialog';
 import { useGlobalToast } from '@/app/components/common/Toast';
+import { useAdminConfirmation } from '@/app/components/admin/useAdminConfirmation';
 
 interface EBProps {
   children: ReactNode;
@@ -97,12 +97,8 @@ export class ErrorBoundary extends Component<EBProps, EBState> {
 export default function AdminTemplatesPage() {
   const [templates, setTemplates] = useState<TemplateRollout[]>([]);
   const [loading, setLoading] = useState(true);
-  const [pendingAction, setPendingAction] = useState<{
-    key: string;
-    label: string;
-    action: () => Promise<any>;
-  } | null>(null);
   const toast = useGlobalToast();
+  const { openConfirmation, confirmDialog } = useAdminConfirmation();
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -120,39 +116,9 @@ export default function AdminTemplatesPage() {
     void loadData();
   }, [loadData]);
 
-  const confirmAction = async () => {
-    if (!pendingAction) return;
-
-    try {
-      await pendingAction.action();
-      await loadData();
-      toast.success(`${pendingAction.label} completed for ${pendingAction.key}.`);
-    } catch {
-      toast.error('Operation failed. Monitoring team notified.');
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
   return (
     <ErrorBoundary onReset={loadData}>
-      <ConfirmDialog
-        open={pendingAction !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingAction(null);
-        }}
-        title={pendingAction ? `${pendingAction.label} rollout?` : 'Confirm rollout action'}
-        description={
-          pendingAction
-            ? `This action will impact live traffic for ${pendingAction.key}.`
-            : ''
-        }
-        confirmLabel={pendingAction?.label ?? 'Confirm'}
-        variant={pendingAction?.label === 'KILL' ? 'danger' : 'default'}
-        onConfirm={() => {
-          void confirmAction();
-        }}
-      />
+      {confirmDialog}
 
       <div className="min-h-screen bg-black text-white p-8">
         <header className="max-w-7xl mx-auto mb-12 flex justify-between items-start">
@@ -237,10 +203,16 @@ export default function AdminTemplatesPage() {
                     <td className="px-6 py-6 text-right space-x-1">
                       <button
                         onClick={() =>
-                          setPendingAction({
-                            key: t.key,
-                            label: 'PROMOTE',
-                            action: () => rolloutApi.promote(t.key),
+                          openConfirmation({
+                            title: 'PROMOTE rollout?',
+                            description: `This action will impact live traffic for ${t.key}.`,
+                            confirmLabel: 'PROMOTE',
+                            action: async () => {
+                              await rolloutApi.promote(t.key);
+                              await loadData();
+                            },
+                            successMessage: `PROMOTE completed for ${t.key}.`,
+                            errorMessage: 'Operation failed. Monitoring team notified.',
                           })
                         }
                         className="p-2 text-zinc-600 hover:text-blue-500"
@@ -249,10 +221,16 @@ export default function AdminTemplatesPage() {
                       </button>
                       <button
                         onClick={() =>
-                          setPendingAction({
-                            key: t.key,
-                            label: 'ROLLBACK',
-                            action: () => rolloutApi.rollback(t.key),
+                          openConfirmation({
+                            title: 'ROLLBACK rollout?',
+                            description: `This action will impact live traffic for ${t.key}.`,
+                            confirmLabel: 'ROLLBACK',
+                            action: async () => {
+                              await rolloutApi.rollback(t.key);
+                              await loadData();
+                            },
+                            successMessage: `ROLLBACK completed for ${t.key}.`,
+                            errorMessage: 'Operation failed. Monitoring team notified.',
                           })
                         }
                         className="p-2 text-zinc-600 hover:text-yellow-500"
@@ -261,10 +239,17 @@ export default function AdminTemplatesPage() {
                       </button>
                       <button
                         onClick={() =>
-                          setPendingAction({
-                            key: t.key,
-                            label: 'KILL',
-                            action: () => rolloutApi.killSwitch(t.key),
+                          openConfirmation({
+                            title: 'KILL rollout?',
+                            description: `This action will impact live traffic for ${t.key}.`,
+                            confirmLabel: 'KILL',
+                            variant: 'danger',
+                            action: async () => {
+                              await rolloutApi.killSwitch(t.key);
+                              await loadData();
+                            },
+                            successMessage: `KILL completed for ${t.key}.`,
+                            errorMessage: 'Operation failed. Monitoring team notified.',
                           })
                         }
                         className="p-2 text-zinc-600 hover:text-red-500"

@@ -12,6 +12,7 @@ import { CryptoUtil } from '../common/crypto.util';
 import { UserResponse } from '../user/user.controller';
 import { AppException } from '../common/errors/app-exception';
 import { ErrorCode } from '../common/errors/error-codes';
+import { getDefaultAdminStellarInvocationScopes } from '../stellar/stellar-invocation-policy';
 
 // Mock bcryptjs
 jest.mock('bcryptjs', () => ({
@@ -271,6 +272,37 @@ describe('AuthService', () => {
         const response = (error as AppException).getResponse() as any;
         expect(response.code).toBe(ErrorCode.AUTH_INVALID_CREDENTIALS);
       }
+    });
+
+    it('issues granular Stellar invocation scopes for admin users', async () => {
+      const mockAdminResponse: UserResponse = {
+        id: 99,
+        username: 'admin-user',
+        email: 'admin@example.com',
+        role: UserRole.ADMIN,
+        is_active: true,
+        notificationPreferences: {},
+        privacy: {
+          isDiscoverable: true,
+          canReceiveReplies: true,
+          showReactions: true,
+          dataProcessingConsent: true,
+        },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      jest.spyOn(service, 'validateUser').mockResolvedValue(mockAdminResponse);
+      mockJwtService.sign.mockReturnValue('mock-admin-jwt');
+
+      await service.login('admin@example.com', 'password123');
+
+      expect(mockJwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({
+          role: UserRole.ADMIN,
+          scopes: getDefaultAdminStellarInvocationScopes(),
+        }),
+      );
     });
   });
 });
