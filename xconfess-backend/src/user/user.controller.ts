@@ -15,8 +15,8 @@ import {
   Param,
   Query,
   NotFoundException,
-  Query,
   ForbiddenException,
+  HttpException,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { AuthService } from '../auth/auth.service';
@@ -141,7 +141,7 @@ export class UserController {
       );
       return result;
     } catch (error) {
-      if (error instanceof UnauthorizedException) {
+      if (error instanceof HttpException) {
         throw error;
       }
       const message = error instanceof Error ? error.message : 'Unknown error';
