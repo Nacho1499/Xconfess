@@ -43,7 +43,7 @@ interface AuthGuardProps {
  * ```
  */
 export function AuthGuard({ children }: AuthGuardProps) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, isSessionExpired } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -111,6 +111,46 @@ export function AuthGuard({ children }: AuthGuardProps) {
     return <>{children}</>;
   }
 
+  // Show session expired UI immediately when session is expired
+  // This provides deterministic recovery without waiting for redirect loops
+  if (isSessionExpired && !isAuthenticated) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center max-w-md mx-auto p-6">
+          <div className="rounded-full h-12 w-12 bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto mb-4">
+            <svg
+              className="h-6 w-6 text-red-600 dark:text-red-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
+              />
+            </svg>
+          </div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
+            Session Expired
+          </h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
+            Your session has expired. Please log in again to continue.
+          </p>
+          <button
+            onClick={() => {
+              window.location.href = '/login';
+            }}
+            className="inline-flex items-center justify-center rounded-lg bg-purple-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition-colors"
+          >
+            Go to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Show loading state while checking auth
   if (isLoading) {
     return (
@@ -124,6 +164,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   }
 
   // Redirect loop detected — show a user-friendly error instead of looping
+  // This is a fallback for cases not caught by isSessionExpired
   if (
     !isAuthenticated &&
     redirectCount.current >= MAX_REDIRECT_ATTEMPTS
@@ -147,11 +188,10 @@ export function AuthGuard({ children }: AuthGuardProps) {
             </svg>
           </div>
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
-            Session Expired
+            Authentication Error
           </h2>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-            Your session could not be verified. This may happen if your session
-            has expired or your cookies have been cleared.
+            Unable to verify your session. Please try logging in again.
           </p>
           <button
             onClick={() => {
