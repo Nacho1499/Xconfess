@@ -17,6 +17,21 @@ import { decryptConfession } from '../../utils/confession-encryption';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { UserAnonymousUser } from '../../user/entities/user-anonymous-link.entity';
 import { ConfigService } from '@nestjs/config';
+import { Tip } from '../../tipping/entities/tip.entity';
+
+export interface BulkResolveOutcome {
+  id: string;
+  outcome: 'resolved' | 'skipped' | 'not_found';
+  previousStatus?: ReportStatus;
+}
+
+export interface BulkResolveResult {
+  requested: number;
+  resolved: number;
+  skipped: number;
+  notFound: number;
+  outcomes: BulkResolveOutcome[];
+}
 
 @Injectable()
 export class AdminService {
@@ -44,6 +59,8 @@ export class AdminService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(UserAnonymousUser)
     private readonly userAnonRepository: Repository<UserAnonymousUser>,
+    @InjectRepository(Tip)
+    private readonly tipRepository: Repository<Tip>,
     private readonly moderationService: ModerationService,
     private readonly moderationTemplateService: ModerationTemplateService,
     private readonly configService: ConfigService,
@@ -204,38 +221,87 @@ export class AdminService {
     adminId: number,
     notes: string | null,
     request?: Request,
-  ): Promise<number> {
-    const reports = await this.reportRepository.find({
-      where: { id: In(ids), status: ReportStatus.PENDING },
+  ): Promise<BulkResolveResult> {
+    // Fetch all requested reports in one query (any status)
+    const found = await this.reportRepository.find({
+      where: { id: In(ids) },
     });
 
-    if (reports.length === 0) {
-      return 0;
-    }
+    const foundById = new Map(found.map((r) => [r.id, r]));
 
+    const outcomes: BulkResolveOutcome[] = [];
+    const toSave: typeof found = [];
     const now = new Date();
-    reports.forEach((report) => {
+
+    for (const id of ids) {
+      const report = foundById.get(id);
+
+      if (!report) {
+        outcomes.push({ id, outcome: 'not_found' });
+        continue;
+      }
+
+      if (report.status !== ReportStatus.PENDING) {
+        outcomes.push({
+          id,
+          outcome: 'skipped',
+          previousStatus: report.status,
+        });
+        continue;
+      }
+
+      const before = report.status;
       report.status = ReportStatus.RESOLVED;
       report.resolvedBy = adminId;
       report.resolvedAt = now;
       report.resolutionNotes = notes;
-    });
+      toSave.push(report);
+      outcomes.push({ id, outcome: 'resolved', previousStatus: before });
+    }
 
-    await this.reportRepository.save(reports);
+    if (toSave.length > 0) {
+      await this.reportRepository.save(toSave);
+    }
 
-    await this.moderationService.logAction(
-      adminId,
-      AuditActionType.BULK_ACTION,
-      'report',
-      null,
-      { action: 'bulk_resolve', count: reports.length, reportIds: ids },
-      notes,
-      request,
+    // Write one audit entry per touched report so every ID is individually
+    // attributable in the audit trail.
+    const auditPromises = outcomes.map((item) =>
+      this.moderationService
+        .logAction(
+          adminId,
+          AuditActionType.BULK_ACTION,
+          'report',
+          item.id,
+          {
+            action: 'bulk_resolve',
+            outcome: item.outcome,
+            previousStatus: item.previousStatus ?? null,
+            resolvedAt: item.outcome === 'resolved' ? now.toISOString() : null,
+          },
+          notes,
+          request,
+        )
+        .catch((err: unknown) => {
+          this.logger.error(
+            `Audit log failed for report ${item.id} during bulk resolve: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }),
     );
 
-    this.eventEmitter.emit('reports.bulk.updated', reports);
+    await Promise.all(auditPromises);
 
-    return reports.length;
+    const resolved = outcomes.filter((o) => o.outcome === 'resolved');
+    if (resolved.length > 0) {
+      this.eventEmitter.emit('reports.bulk.updated', toSave);
+    }
+
+    return {
+      requested: ids.length,
+      resolved: resolved.length,
+      skipped: outcomes.filter((o) => o.outcome === 'skipped').length,
+      notFound: outcomes.filter((o) => o.outcome === 'not_found').length,
+      outcomes,
+    };
   }
 
   // Confessions
@@ -472,6 +538,104 @@ export class AdminService {
       note: anonIds.length
         ? 'Confessions derived from user session mappings (user_anonymous_users)'
         : 'No anonymous session mappings found for this user yet',
+    };
+  }
+
+  // Operator anchor & tip lookup (Issue #778)
+  async lookupAnchorAndTip(params: {
+    txHash?: string;
+    confessionId?: string;
+  }): Promise<{
+    anchor: {
+      confessionId: string | null;
+      stellarTxHash: string | null;
+      stellarHash: string | null;
+      isAnchored: boolean;
+      anchoredAt: Date | null;
+    } | null;
+    tips: {
+      id: string;
+      txId: string;
+      amount: number;
+      senderAddress: string | null;
+      verificationStatus: string;
+      verifiedAt: Date | null;
+      createdAt: Date;
+    }[];
+  }> {
+    const { txHash, confessionId } = params;
+
+    if (!txHash && !confessionId) {
+      throw new BadRequestException(
+        'At least one of txHash or confessionId is required',
+      );
+    }
+
+    let confession: AnonymousConfession | null = null;
+    let tips: Tip[] = [];
+
+    if (txHash) {
+      // Look up confession by stellar tx hash
+      confession = await this.confessionRepository.findOne({
+        where: { stellarTxHash: txHash },
+        select: [
+          'id',
+          'stellarTxHash',
+          'stellarHash',
+          'isAnchored',
+          'anchoredAt',
+        ] as any,
+      });
+
+      // Also look for a tip by tx ID
+      const tip = await this.tipRepository.findOne({
+        where: { txId: txHash },
+      });
+      if (tip) tips = [tip];
+    }
+
+    if (confessionId) {
+      if (!confession) {
+        confession = await this.confessionRepository.findOne({
+          where: { id: confessionId },
+          select: [
+            'id',
+            'stellarTxHash',
+            'stellarHash',
+            'isAnchored',
+            'anchoredAt',
+          ] as any,
+        });
+      }
+
+      // Fetch all tips for this confession
+      if (tips.length === 0) {
+        tips = await this.tipRepository.find({
+          where: { confessionId },
+          order: { createdAt: 'DESC' },
+        });
+      }
+    }
+
+    return {
+      anchor: confession
+        ? {
+            confessionId: confession.id,
+            stellarTxHash: confession.stellarTxHash ?? null,
+            stellarHash: confession.stellarHash ?? null,
+            isAnchored: confession.isAnchored ?? false,
+            anchoredAt: confession.anchoredAt ?? null,
+          }
+        : null,
+      tips: tips.map((t) => ({
+        id: t.id,
+        txId: t.txId,
+        amount: Number(t.amount),
+        senderAddress: t.senderAddress,
+        verificationStatus: t.verificationStatus,
+        verifiedAt: t.verifiedAt,
+        createdAt: t.createdAt,
+      })),
     };
   }
 
