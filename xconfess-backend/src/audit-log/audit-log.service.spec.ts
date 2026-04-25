@@ -190,6 +190,54 @@ describe('AuditLogService', () => {
     );
   });
 
+  it('records notification DLQ cleanup audit entries with target summaries', async () => {
+    mockRepository.create.mockReturnValue({} as AuditLog);
+    mockRepository.save.mockResolvedValue({} as AuditLog);
+
+    await service.logNotificationDlqCleanup(
+      'admin-9',
+      {
+        cleanupType: 'bulk',
+        queue: 'notifications-dlq',
+        operationId: 'cleanup:admin-9:1',
+        targetJobIds: ['dlq-1', 'dlq-2'],
+        summary: {
+          attempted: 2,
+          removed: 1,
+          failed: 1,
+          noOp: false,
+        },
+        outcomes: [
+          { jobId: 'dlq-1', outcome: 'removed' },
+          { jobId: 'dlq-2', outcome: 'failed', error: 'redis timeout' },
+        ],
+      },
+      { requestId: 'req-clean-1', ipAddress: '10.0.0.7' },
+    );
+
+    expect(mockRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: AuditActionType.NOTIFICATION_DLQ_CLEANUP,
+        metadata: expect.objectContaining({
+          entityType: 'notification_dlq',
+          cleanupType: 'bulk',
+          queue: 'notifications-dlq',
+          operationId: 'cleanup:admin-9:1',
+          targetJobIds: ['dlq-1', 'dlq-2'],
+          summary: expect.objectContaining({
+            attempted: 2,
+            removed: 1,
+            failed: 1,
+          }),
+          actorType: 'admin',
+          actorId: 'admin-9',
+        }),
+        requestId: 'req-clean-1',
+        ipAddress: '10.0.0.7',
+      }),
+    );
+  });
+
   it('tags admin moderation actions with admin actor metadata', async () => {
     mockRepository.create.mockReturnValue({} as AuditLog);
     mockRepository.save.mockResolvedValue({} as AuditLog);

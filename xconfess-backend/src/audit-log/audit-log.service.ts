@@ -345,13 +345,20 @@ export class AuditLogService {
     metadata: {
       replayType: 'single' | 'bulk';
       queue: string;
+      operationId?: string;
       jobId?: string;
+      targetJobIds?: string[];
+      targetJobs?: Array<Record<string, unknown>>;
       filters?: Record<string, any>;
       summary?: {
         attempted: number;
         replayed: number;
         failed: number;
+        deduplicated?: number;
+        removed?: number;
+        noOp?: boolean;
       };
+      outcomes?: Array<Record<string, unknown>>;
       reason?: string | null;
       replayedAt?: string;
     },
@@ -363,6 +370,45 @@ export class AuditLogService {
         entityType: 'notification_dlq',
         ...metadata,
         replayedAt: metadata.replayedAt || new Date().toISOString(),
+      },
+      context: {
+        ...context,
+        userId: adminId,
+        actor: this.createActor('admin', adminId),
+      },
+    });
+  }
+
+  async logNotificationDlqCleanup(
+    adminId: string,
+    metadata: {
+      cleanupType: 'bulk' | 'retention';
+      queue: string;
+      operationId?: string;
+      targetJobIds?: string[];
+      targetJobs?: Array<Record<string, unknown>>;
+      filters?: Record<string, any>;
+      summary?: {
+        attempted: number;
+        removed: number;
+        failed: number;
+        noOp?: boolean;
+      };
+      outcomes?: Array<Record<string, unknown>>;
+      reason?: string | null;
+      cleanedAt?: string;
+      retentionDays?: number;
+      batchSize?: number;
+      dryRun?: boolean;
+    },
+    context?: AuditLogContext,
+  ): Promise<void> {
+    await this.log({
+      actionType: AuditActionType.NOTIFICATION_DLQ_CLEANUP,
+      metadata: {
+        entityType: 'notification_dlq',
+        ...metadata,
+        cleanedAt: metadata.cleanedAt || new Date().toISOString(),
       },
       context: {
         ...context,

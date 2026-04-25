@@ -18,6 +18,9 @@ export interface NotificationJobData {
     failedAt: string;
     attemptsMade: number;
     lastError: string;
+    replayJobId?: string;
+    replayedAt?: string;
+    replayOutcome?: 'replayed' | 'deduplicated';
   };
 }
 
