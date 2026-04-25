@@ -116,7 +116,7 @@ describe('CommentService (soft‑delete)', () => {
         limit: 20,
       };
       const res = await service.findByConfessionId('conf1', queryDto);
-      expect(res.comments).toEqual([]);
+      expect(res.data).toEqual([]);
       expect((commentRepo as any).createQueryBuilder).toHaveBeenCalledWith(
         'comment',
       );
@@ -774,9 +774,9 @@ describe('CommentService (cursor pagination)', () => {
 
       const result = await service.findByConfessionId('conf1', queryDto);
 
-      expect(result.comments).toHaveLength(2);
+      expect(result.data).toHaveLength(2);
       expect(result.hasMore).toBe(false);
-      expect(result.nextCursor).toBeUndefined();
+      expect(result.nextCursor).toBeNull();
     });
 
     it('includes orphaned replies when requested', async () => {
