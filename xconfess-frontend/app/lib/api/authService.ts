@@ -47,19 +47,16 @@ apiClient.interceptors.request.use(
 
 /**
  * Response interceptor to handle 401 errors (token expiration)
+ * Note: 401 redirects are now handled deterministically by AuthGuard
+ * to prevent flicker and ensure consistent recovery paths
  */
 apiClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     if (error.response?.status === 401) {
-      // Session expired or invalid
-      // We'll trigger a logout on the session API to be sure
+      // Session expired or invalid - clear session cookie
+      // AuthGuard will handle the deterministic redirect
       await fetch('/api/auth/session', { method: 'DELETE' }).catch(() => { });
-
-      // Redirect to login if not already there
-      if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
-        window.location.href = '/login';
-      }
     }
     return Promise.reject(error);
   }
