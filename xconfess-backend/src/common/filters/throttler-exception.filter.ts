@@ -1,21 +1,25 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException } from '@nestjs/common';
-import { Response } from 'express';
+import { ExceptionFilter, Catch, ArgumentsHost } from '@nestjs/common';
+import { Request, Response } from 'express';
 import { ThrottlerException } from '@nestjs/throttler';
+import { ErrorCode } from '../errors/error-codes';
+import { AppException } from '../errors/app-exception';
 
 @Catch(ThrottlerException)
 export class ThrottlerExceptionFilter implements ExceptionFilter {
   catch(exception: ThrottlerException, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<Request>();
     const status = exception.getStatus();
 
-    response
-      .status(status)
-      .json({
-        statusCode: status,
-        message: 'Too Many Requests',
-        error: 'Rate limit exceeded',
-        timestamp: new Date().toISOString(),
-      });
+    const appException = AppException.fromHttpException(exception);
+    const body = appException.getResponse() as any;
+
+    response.status(status).json({
+      ...body,
+      timestamp: new Date().toISOString(),
+      path: request.url,
+      requestId: (request as any).requestId || 'unknown',
+    });
   }
-} 
+}

@@ -2,20 +2,29 @@ import {
   Inject,
   Injectable,
   InternalServerErrorException,
-  Logger,
+  ConflictException,
   NotFoundException,
+  Logger,
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User } from './entities/user.entity';
-import * as bcrypt from 'bcrypt';
+import { User, UserRole } from './entities/user.entity';
+import * as bcrypt from 'bcryptjs';
 import { UpdateUserProfileDto } from './dto/updateProfile.dto';
+import {
+  PrivacySettingsResponseDto,
+  UpdatePrivacySettingsDto,
+} from './dto/update-privacy-settings.dto';
 import { EmailService } from '../email/email.service';
 import { CryptoUtil } from '../common/crypto.util';
 import { maskUserId } from '../utils/mask-user-id';
- 
-
+import {
+  ActivityType,
+  PaginatedUserActivityDto,
+} from './dto/user-activity.dto';
+import { decryptConfession } from '../utils/confession-encryption';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class UserService {
@@ -26,144 +35,66 @@ export class UserService {
     private userRepository: Repository<User>,
     @Inject(forwardRef(() => EmailService))
     private emailService: EmailService,
+    private readonly configService: ConfigService,
   ) {}
+
+  // =========================
+  // BASIC USER METHODS
+  // =========================
+
+  private get aesKey(): string {
+    return this.configService.get<string>('app.confessionAesKey', '');
+  }
 
   async findByEmail(email: string): Promise<User | null> {
     try {
-      this.logger.debug(`Finding user by email (hashed)`);
-      const emailHash = CryptoUtil.hash(email);
-      const user = await this.userRepository.findOne({ where: { emailHash } });
+      const normalizedEmail = email.trim().toLowerCase();
+      const emailHash = CryptoUtil.hash(normalizedEmail);
+      return await this.userRepository.findOne({ where: { emailHash } });
+    } catch {
+      throw new InternalServerErrorException('Error finding user by email');
+    }
+  }
 
-      if (user) {
-        this.logger.debug(`User found with ID: ${user.id}`);
-      } else {
-        this.logger.debug(`No user found with email: ${email}`);
-      }
-
-      return user;
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Error finding user by email: ${errorMessage}`);
-      throw new InternalServerErrorException(
-        `Error finding user: ${errorMessage}`,
-      );
+  async findByUsername(username: string): Promise<User | null> {
+    try {
+      return await this.userRepository.findOne({
+        where: { username: username.trim() },
+      });
+    } catch {
+      throw new InternalServerErrorException('Error finding user by username');
     }
   }
 
   async findById(id: number): Promise<User | null> {
     try {
-      this.logger.debug(`Finding user by ID: ${id}`);
-      const user = await this.userRepository.findOne({ where: { id } });
-
-      if (user) {
-        this.logger.debug(`User found with ID: ${user.id}`);
-      } else {
-        this.logger.debug(`No user found with ID: ${id}`);
-      }
-
-      return user;
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Error finding user by ID: ${errorMessage}`);
-      throw new InternalServerErrorException(
-        `Error finding user: ${errorMessage}`,
-      );
+      return await this.userRepository.findOne({ where: { id } });
+    } catch {
+      throw new InternalServerErrorException('Error finding user by ID');
     }
   }
 
-  async findByResetToken(token: string): Promise<User | null> {
-    try {
-      this.logger.debug(`Finding user by reset token`);
-      const user = await this.userRepository.findOne({ 
-        where: { 
-          resetPasswordToken: token,
-        },
-      });
-
-      if (user) {
-        this.logger.debug(`User found with reset token, ID: ${user.id}`);
-      } else {
-        this.logger.debug(`No user found with reset token`);
-      }
-
-      return user;
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Error finding user by reset token: ${errorMessage}`);
-      throw new InternalServerErrorException(
-        `Error finding user by reset token: ${errorMessage}`,
-      );
-    }
-  }
-
-  async updatePassword(userId: number, newPassword: string): Promise<void> {
-    try {
-      this.logger.log(`Updating password for masked user ID: ${maskUserId(userId)}`);
-
-      // Hash the new password
-      const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-      // Update the user's password and clear reset token fields
-      await this.userRepository.update(userId, {
-        password: hashedPassword,
-        resetPasswordToken: null,
-        resetPasswordExpires: null,
-      });
-
-      this.logger.log(`Password updated successfully for masked user ID: ${maskUserId(userId)}`);
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack : '';
-
-      this.logger.error(`Failed to update password for masked user ID ${maskUserId(userId)}: ${errorMessage}`, errorStack);
-      throw new InternalServerErrorException(
-        `Failed to update password: ${errorMessage}`,
-      );
-    }
-  }
-
-  async setResetPasswordToken(userId: number, token: string, expiresAt: Date): Promise<void> {
-    try {
-      this.logger.log(`Setting reset password token for masked user ID: ${maskUserId(userId)}`);
-
-      await this.userRepository.update(userId, {
-        resetPasswordToken: token,
-        resetPasswordExpires: expiresAt,
-      });
-
-      this.logger.log(`Reset password token set successfully for masked user ID: ${maskUserId(userId)}`);
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack : '';
-
-      this.logger.error(`Failed to set reset token for masked user ID ${maskUserId(userId)}: ${errorMessage}`, errorStack);
-      throw new InternalServerErrorException(
-        `Failed to set reset token: ${errorMessage}`,
-      );
-    }
-  }
+  // =========================
+  // CREATE USER
+  // =========================
 
   async create(
     email: string,
     password: string,
     username: string,
   ): Promise<User> {
-    try {
-      this.logger.log(`Creating new user with email: [PROTECTED]`);
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await this.findByEmail(normalizedEmail);
+    if (existing) {
+      throw new ConflictException('Email already in use');
+    }
 
-      // Hash the password with bcrypt
+    try {
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // Encrypt and hash email
-      const { encrypted, iv, tag } = CryptoUtil.encrypt(email);
-      const emailHash = CryptoUtil.hash(email);
+      const { encrypted, iv, tag } = CryptoUtil.encrypt(normalizedEmail);
+      const emailHash = CryptoUtil.hash(normalizedEmail);
 
-      // Create user entity
       const user = this.userRepository.create({
         emailEncrypted: encrypted,
         emailIv: iv,
@@ -173,85 +104,380 @@ export class UserService {
         username,
       });
 
-      // Save user to database
       const savedUser = await this.userRepository.save(user);
-      this.logger.log(`User created successfully with masked user ID: ${maskUserId(savedUser.id)}`);
 
-      // Send welcome email (fire and forget)
       try {
-        const decryptedEmail = email; // already have it
-        await this.emailService.sendWelcomeEmail(decryptedEmail, savedUser.username);
-        this.logger.log(`Welcome email sent to [PROTECTED]`);
-      } catch (emailError) {
-        // Log but don't fail the user registration if email sending fails
-        this.logger.error(
-          `Failed to send welcome email: ${emailError instanceof Error ? emailError.message : 'Unknown error'}`,
-          emailError instanceof Error ? emailError.stack : ''
+        await this.emailService.sendWelcomeEmail(
+          normalizedEmail,
+          savedUser.username,
+        );
+      } catch (err) {
+        // Ignore email sending failures as they shouldn't block user creation
+        this.logger.warn(
+          `Failed to send welcome email to ${normalizedEmail}: ${
+            err instanceof Error ? err.message : err
+          }`,
         );
       }
-
       return savedUser;
-    } catch (error) {
-      // Handle error safely
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack : '';
-
-      this.logger.error(`Failed to create user: ${errorMessage}`, errorStack);
-      throw new InternalServerErrorException(
-        `Failed to create user: ${errorMessage}`,
-      );
+    } catch {
+      throw new InternalServerErrorException('Failed to create user');
     }
   }
 
+  // =========================
+  // PROFILE
+  // =========================
 
-  async updateProfile(userId: number, updateDto: UpdateUserProfileDto): Promise<User> {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
+  async updateProfile(
+    userId: number,
+    updateDto: UpdateUserProfileDto,
+  ): Promise<User> {
+    const user = await this.findById(userId);
     if (!user) throw new NotFoundException('User not found');
 
     Object.assign(user, updateDto);
     return this.userRepository.save(user);
   }
 
-  async deactivateAccount(userId: number): Promise<User> {
-    try {
-      this.logger.log(`Deactivating account for masked user ID: ${maskUserId(userId)}`);
-      
-      const user = await this.userRepository.findOne({ where: { id: userId } });
-      if (!user) {
-        throw new NotFoundException('User not found');
-      }
+  // =========================
+  // Password reset helpers
+  // =========================
 
-      user.is_active = false;
-      const updatedUser = await this.userRepository.save(user);
-      
-      this.logger.log(`Account deactivated successfully for masked user ID: ${maskUserId(userId)}`);
-      return updatedUser;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Failed to deactivate account: ${errorMessage}`);
-      throw error instanceof NotFoundException ? error : new InternalServerErrorException(`Failed to deactivate account: ${errorMessage}`);
+  /**
+   * Persist legacy reset fields on the user row.
+   * (Some flows still use these columns in addition to the password_resets table.)
+   */
+  async setResetPasswordToken(
+    userId: number,
+    token: string,
+    expiresAt: Date,
+  ): Promise<void> {
+    const user = await this.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+
+    user.resetPasswordToken = token;
+    user.resetPasswordExpires = expiresAt;
+    try {
+      await this.userRepository.save(user);
+    } catch {
+      throw new InternalServerErrorException(
+        'Error setting reset password token',
+      );
     }
   }
 
-  async reactivateAccount(userId: number): Promise<User> {
-    try {
-      this.logger.log(`Reactivating account for masked user ID: ${maskUserId(userId)}`);
-      
-      const user = await this.userRepository.findOne({ where: { id: userId } });
-      if (!user) {
-        throw new NotFoundException('User not found');
-      }
+  /**
+   * Update the user's password and clear any reset token fields.
+   */
+  async updatePassword(userId: number, newPassword: string): Promise<void> {
+    const user = await this.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
 
-      user.is_active = true;
-      const updatedUser = await this.userRepository.save(user);
-      
-      this.logger.log(`Account reactivated successfully for masked user ID: ${maskUserId(userId)}`);
-      return updatedUser;
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    user.password = hashedPassword;
+    user.resetPasswordToken = null;
+    user.resetPasswordExpires = null;
+
+    try {
+      await this.userRepository.save(user);
+    } catch {
+      throw new InternalServerErrorException('Error updating password');
+    }
+  }
+
+  // =========================
+  // ACCOUNT STATUS
+  // =========================
+
+  async deactivateAccount(userId: number): Promise<User> {
+    const user = await this.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+
+    user.is_active = false;
+    return this.userRepository.save(user);
+  }
+
+  async reactivateAccount(userId: number): Promise<User> {
+    const user = await this.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+
+    user.is_active = true;
+    return this.userRepository.save(user);
+  }
+
+  // =========================
+  // ROLE
+  // =========================
+
+  async setUserRole(userId: number, role: UserRole): Promise<User> {
+    const user = await this.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+
+    user.role = role;
+    return this.userRepository.save(user);
+  }
+
+  // =========================
+  // SAVE USER
+  // =========================
+
+  async saveUser(user: User): Promise<User> {
+    return this.userRepository.save(user);
+  }
+
+  // =========================
+  // 🔐 PRIVACY SETTINGS (FIXED)
+  // =========================
+
+  async getPrivacySettings(
+    userId: number,
+  ): Promise<PrivacySettingsResponseDto> {
+    const user = await this.findById(userId);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const ps = user.privacySettings;
+    const dataProcessingConsent =
+      ps?.dataProcessingConsent === undefined ? true : ps.dataProcessingConsent;
+
+    return {
+      isDiscoverable: user.isDiscoverable(),
+      canReceiveReplies: user.canReceiveReplies(),
+      showReactions: user.shouldShowReactions(),
+      dataProcessingConsent: ps?.dataProcessingConsent !== false,
+    };
+  }
+
+  async updatePrivacySettings(
+    userId: number,
+    dto: UpdatePrivacySettingsDto,
+  ): Promise<PrivacySettingsResponseDto> {
+    const user = await this.findById(userId);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const current = user.privacySettings || {
+      isDiscoverable: true,
+      canReceiveReplies: true,
+      showReactions: true,
+      dataProcessingConsent: true,
+    };
+
+    user.privacySettings = {
+      isDiscoverable: dto.isDiscoverable ?? current.isDiscoverable,
+      canReceiveReplies: dto.canReceiveReplies ?? current.canReceiveReplies,
+      showReactions: dto.showReactions ?? current.showReactions,
+
+      dataProcessingConsent:
+        dto.dataProcessingConsent ?? current.dataProcessingConsent ?? true,
+    };
+
+    await this.userRepository.save(user);
+
+    await this.enforcePrivacyPolicies(user);
+
+    return {
+      isDiscoverable: user.isDiscoverable(),
+      canReceiveReplies: user.canReceiveReplies(),
+      showReactions: user.shouldShowReactions(),
+      dataProcessingConsent:
+        user.privacySettings?.dataProcessingConsent !== false,
+    };
+  }
+
+  private async enforcePrivacyPolicies(user: User): Promise<void> {
+    if (!user.canReceiveReplies()) {
+      this.logger.debug(`Replies disabled for user ${user.id}`);
+    }
+
+    if (!user.shouldShowReactions()) {
+      this.logger.debug(`Reactions hidden for user ${user.id}`);
+    }
+  }
+
+  async getUserConfessionsList(
+    userId: number,
+    page: number,
+    limit: number,
+  ): Promise<{ data: any[]; meta: any }> {
+    const user = await this.findById(userId);
+    if (!user) {
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+    }
+
+    const userEntity = this.userRepository.metadata.target;
+    const skip = (page - 1) * limit;
+
+    const confessions = await this.userRepository.manager
+      .createQueryBuilder(userEntity as any, 'u')
+      .leftJoinAndSelect('u.anonymousUser', 'au')
+      .leftJoinAndSelect('au.confessions', 'confessions')
+      .where('u.id = :userId', { userId })
+      .andWhere('confessions.isDeleted = false')
+      .andWhere('confessions.isHidden = false')
+      .orderBy('confessions.created_at', 'DESC')
+      .skip(skip)
+      .take(limit)
+      .getManyAndCount();
+
+    const [data, total] = confessions;
+
+    const decryptedData = data
+      .flatMap((u: any) => u.anonymousUser?.confessions || [])
+      .map((confession: any) => {
+        if (confession.message) {
+          try {
+            const { CryptoUtil } = require('../common/crypto.util');
+            confession.message = CryptoUtil.decrypt(
+              confession.message,
+              confession.messageIv,
+              confession.messageTag,
+            );
+          } catch {
+            confession.message = '[Encrypted]';
+          }
+        }
+        return confession;
+      });
+
+    return {
+      data: decryptedData,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getUserActivitiesList(
+    userId: number,
+    page: number,
+    limit: number,
+  ): Promise<PaginatedUserActivityDto> {
+    const user = await this.findById(userId);
+    if (!user) {
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+    }
+
+    const offset = (page - 1) * limit;
+
+    try {
+      // Use raw SQL for efficient multi-table aggregation via UNION ALL
+      const rawData = await this.userRepository.manager.query(
+        `
+      SELECT * FROM (
+        -- Confessions
+        SELECT 
+          c.id::text as id, 
+          '${ActivityType.CONFESSION}' as type, 
+          c.message as content, 
+          json_build_object('isAnchored', c.is_anchored, 'stellarTxHash', c.stellar_tx_hash) as metadata, 
+          c.created_at as "createdAt"
+        FROM anonymous_confessions c
+        JOIN user_anonymous_users ul ON c.anonymous_user_id = ul.anonymous_user_id
+        WHERE ul.user_id = $1 AND c."isDeleted" = false AND c.is_hidden = false
+
+        UNION ALL
+
+        -- Comments
+        SELECT 
+          com.id::text as id, 
+          '${ActivityType.COMMENT}' as type, 
+          com.content as content, 
+          json_build_object('confessionId', com."confessionId") as metadata, 
+          com."createdAt" as "createdAt"
+        FROM comments com
+        JOIN user_anonymous_users ul ON com.anonymous_user_id = ul.anonymous_user_id
+        WHERE ul.user_id = $1 AND com."isDeleted" = false
+
+        UNION ALL
+
+        -- Reactions
+        SELECT 
+          r.id::text as id, 
+          '${ActivityType.REACTION}' as type, 
+          NULL as content, 
+          json_build_object('emoji', r.emoji, 'confessionId', r.confession_id) as metadata, 
+          r.created_at as "createdAt"
+        FROM reaction r
+        JOIN user_anonymous_users ul ON r.anonymous_user_id = ul.anonymous_user_id
+        WHERE ul.user_id = $1
+
+        UNION ALL
+
+        -- Reports
+        SELECT 
+          rep.id::text as id, 
+          '${ActivityType.REPORT}' as type, 
+          rep.details as content, 
+          json_build_object('reason', rep.reason, 'status', rep.status, 'confessionId', rep."confessionId") as metadata, 
+          rep.created_at as "createdAt"
+        FROM reports rep
+        WHERE rep."reporterId" = $1
+      ) activity
+        ORDER BY "createdAt" DESC
+        LIMIT $2 OFFSET $3
+        `,
+        [userId, limit, offset],
+      );
+
+      const countResult = await this.userRepository.manager.query(
+        `
+        SELECT COUNT(*) as total FROM (
+          SELECT 1 FROM anonymous_confessions c JOIN user_anonymous_users ul ON c.anonymous_user_id = ul.anonymous_user_id WHERE ul.user_id = $1 AND c."isDeleted" = false AND c.is_hidden = false
+          UNION ALL
+          SELECT 1 FROM comments com JOIN user_anonymous_users ul ON com.anonymous_user_id = ul.anonymous_user_id WHERE ul.user_id = $1 AND com."isDeleted" = false
+          UNION ALL
+          SELECT 1 FROM reaction r JOIN user_anonymous_users ul ON r.anonymous_user_id = ul.anonymous_user_id WHERE ul.user_id = $1
+          UNION ALL
+          SELECT 1 FROM reports rep WHERE rep."reporterId" = $1
+        ) activity
+        `,
+        [userId],
+      );
+
+      const total = parseInt(countResult[0].total, 10);
+
+      const activities = rawData.map((activity: any) => {
+        let content = activity.content;
+
+        // Decrypt confessions if owner
+        if (activity.type === ActivityType.CONFESSION && content) {
+          try {
+            content = decryptConfession(content, this.aesKey);
+          } catch (e) {
+            content = '[Encrypted Content]';
+          }
+        }
+
+        return {
+          id: activity.id,
+          type: activity.type as ActivityType,
+          content: content,
+          metadata: activity.metadata,
+          createdAt: activity.createdAt,
+        };
+      });
+
+      return {
+        data: activities,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Failed to reactivate account: ${errorMessage}`);
-      throw error instanceof NotFoundException ? error : new InternalServerErrorException(`Failed to reactivate account: ${errorMessage}`);
+      this.logger.error(`Failed to aggregate user activity: ${error.message}`, error.stack);
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
     }
   }
 }

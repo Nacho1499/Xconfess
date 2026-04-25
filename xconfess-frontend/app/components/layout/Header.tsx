@@ -1,0 +1,117 @@
+"use client";
+
+import Link from "next/link";
+import { useState, useCallback, useRef } from "react";
+import { Menu, LogOut } from "lucide-react";
+import { useAuth } from "../../lib/hooks/useAuth";
+import { ThemeToggle } from "../common/ThemeToggle";
+import Sidebar from "./Sidebar";
+
+const navLinkClass =
+  "rounded-full px-4 py-2.5 text-sm font-medium text-[var(--secondary)] transition-all duration-200 hover:bg-white/60 hover:text-[var(--foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--primary)]";
+
+export default function Header() {
+  const { user, logout } = useAuth();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+
+  const closeMobileMenu = useCallback(() => {
+    setMobileMenuOpen(false);
+    menuButtonRef.current?.focus();
+  }, []);
+
+  const handleNavKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Escape" && mobileMenuOpen) {
+        closeMobileMenu();
+      }
+    },
+    [mobileMenuOpen, closeMobileMenu],
+  );
+
+  return (
+    <>
+      <header
+        aria-label="Main navigation"
+        className="sticky top-0 z-30 border-b border-[var(--border)] bg-[color:rgba(243,239,232,0.78)] backdrop-blur-xl"
+        onKeyDown={handleNavKeyDown}
+      >
+        <nav className="mx-auto max-w-6xl px-4 py-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between gap-6">
+            <Link
+              href="/"
+              className="rounded-full px-1 text-[2rem] font-semibold tracking-tight text-[var(--foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--primary)]"
+            >
+              <span className="font-editorial">XConfess</span>
+            </Link>
+
+            <div className="hidden items-center space-x-2 md:flex">
+              <Link href="/" className={navLinkClass}>
+                Feed
+              </Link>
+              <Link href="/search" className={navLinkClass}>
+                Search
+              </Link>
+              <Link href="/profile" className={navLinkClass}>
+                Profile
+              </Link>
+              {user?.role === "admin" && (
+                <Link href="/admin" className={navLinkClass + " font-bold"}>
+                  Admin
+                </Link>
+              )}
+              <Link href="/messages" className={navLinkClass}>
+                Messages
+              </Link>
+
+              <div
+                aria-hidden="true"
+                className="mx-2 h-8 w-px bg-[var(--border)]"
+              />
+
+              <ThemeToggle />
+
+              {user && (
+                <div className="flex items-center space-x-4">
+                  <span
+                    aria-label={`Logged in as ${user.username}`}
+                    className="rounded-full border border-[var(--border)] bg-[var(--surface-muted)] px-4 py-2 text-sm text-[var(--secondary)]"
+                  >
+                    @{user.username}
+                  </span>
+                  <button
+                    onClick={logout}
+                    className="flex items-center space-x-1 rounded-full px-3 py-2 text-red-700 transition-colors hover:bg-red-50 hover:text-red-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500"
+                  >
+                    <LogOut aria-hidden="true" size={18} />
+                    <span>Logout</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-4 md:hidden">
+              <ThemeToggle />
+              <button
+                ref={menuButtonRef}
+                type="button"
+                className="-mr-2 rounded-full border border-[var(--border)] bg-[var(--surface-muted)] p-4 text-[var(--secondary)] transition-colors hover:bg-[var(--surface-strong)] hover:text-[var(--foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--primary)] min-h-[44px] min-w-[44px]"
+                aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+                aria-expanded={mobileMenuOpen}
+                aria-controls="mobile-navigation"
+                onClick={() => setMobileMenuOpen(true)}
+              >
+                <Menu aria-hidden="true" size={24} />
+              </button>
+            </div>
+          </div>
+        </nav>
+      </header>
+
+      <Sidebar
+        isOpen={mobileMenuOpen}
+        onClose={closeMobileMenu}
+      />
+    </>
+  );
+}

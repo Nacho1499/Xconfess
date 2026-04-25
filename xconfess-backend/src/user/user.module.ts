@@ -6,11 +6,14 @@ import { User } from './entities/user.entity';
 import { EmailModule } from '../email/email.module';
 import { AnonymousUser } from './entities/anonymous-user.entity';
 import { AnonymousUserService } from './anonymous-user.service';
+import { UserAnonymousUser } from './entities/user-anonymous-link.entity';
+import { ConfessionModule } from '../confession/confession.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, AnonymousUser]),
+    TypeOrmModule.forFeature([User, AnonymousUser, UserAnonymousUser]),
     forwardRef(() => EmailModule),
+    forwardRef(() => ConfessionModule),
   ],
   providers: [UserService, AnonymousUserService],
   controllers: [UserController],

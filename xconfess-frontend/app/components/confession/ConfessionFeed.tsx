@@ -1,0 +1,162 @@
+"use client";
+
+import { ConfessionCard } from "./ConfessionCard";
+import { ConfessionFeedSkeleton } from "./LoadingSkeleton";
+import { useConfessionsQuery } from "../../lib/hooks/useConfessionsQuery";
+import { usePaginationState } from "../../lib/hooks/usePaginationState";
+import ErrorState from "../common/ErrorState";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
+
+export const ConfessionFeed = () => {
+  const { page, setPage, limit } = usePaginationState();
+  
+  const {
+    data,
+    isLoading,
+    isFetching,
+    error,
+    refetch,
+  } = useConfessionsQuery({ page, limit });
+
+  const confessions = data?.confessions ?? [];
+  const totalPages = data?.total ? Math.ceil(data.total / limit) : (data?.hasMore ? page + 1 : page);
+  const isEmpty = !isLoading && confessions.length === 0;
+
+  // Retry handler
+  const handleRetry = () => {
+    void refetch();
+  };
+
+  // Render pagination items
+  const renderPaginationItems = () => {
+    const items = [];
+    const maxVisible = 5;
+    
+    let startPage = Math.max(1, page - 2);
+    let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+    
+    if (endPage - startPage < maxVisible - 1) {
+      startPage = Math.max(1, endPage - maxVisible + 1);
+    }
+
+    if (startPage > 1) {
+      items.push(
+        <PaginationItem key="1">
+          <PaginationLink onClick={() => setPage(1)}>1</PaginationLink>
+        </PaginationItem>
+      );
+      if (startPage > 2) {
+        items.push(<PaginationEllipsis key="ellipsis-start" />);
+      }
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+      items.push(
+        <PaginationItem key={i}>
+          <PaginationLink 
+            isActive={i === page}
+            onClick={() => setPage(i)}
+          >
+            {i}
+          </PaginationLink>
+        </PaginationItem>
+      );
+    }
+
+    if (endPage < totalPages) {
+      if (endPage < totalPages - 1) {
+        items.push(<PaginationEllipsis key="ellipsis-end" />);
+      }
+      items.push(
+        <PaginationItem key={totalPages}>
+          <PaginationLink onClick={() => setPage(totalPages)}>{totalPages}</PaginationLink>
+        </PaginationItem>
+      );
+    }
+
+    return items;
+  };
+
+  return (
+    <div className="mx-auto w-full max-w-3xl py-2">
+      {/* Empty State */}
+      {isEmpty && (
+        <div className="luxury-panel rounded-[30px] p-10 text-center">
+          <p className="mb-3 font-editorial text-4xl text-[var(--foreground)]">
+            No confessions yet.
+          </p>
+          <p className="mb-5 text-sm leading-7 text-[var(--secondary)]">
+            Be the first to set the tone for the community.
+          </p>
+          <button
+            onClick={handleRetry}
+            className="rounded-full bg-[linear-gradient(135deg,var(--primary),var(--primary-deep))] px-5 py-2.5 text-sm font-medium text-white shadow-[0_18px_40px_-22px_rgba(143,109,60,0.85)] transition-colors hover:brightness-105"
+          >
+            Refresh
+          </button>
+        </div>
+      )}
+
+      {/* Error State */}
+      {error && (
+        <ErrorState
+          error={error.message ?? "Failed to load confessions"}
+          title="Failed to load confessions"
+          description="Something went wrong while fetching confessions."
+          showRetry
+          onRetry={handleRetry}
+        />
+      )}
+
+      {isLoading && <ConfessionFeedSkeleton />}
+
+      {/* Confessions Grid */}
+      {!isEmpty && confessions.length > 0 && (
+        <div className={`space-y-5 transition-opacity duration-200 ${isFetching && !isLoading ? 'opacity-50' : 'opacity-100'}`}>
+          {confessions.map((confession) => (
+            <ConfessionCard key={confession.id} confession={confession} />
+          ))}
+        </div>
+      )}
+
+      {/* Pagination Controls */}
+      {!isEmpty && totalPages > 1 && (
+        <div className="mt-12 py-4">
+          <Pagination>
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious 
+                  onClick={() => page > 1 && setPage(page - 1)}
+                  aria-disabled={page <= 1}
+                  className={page <= 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                />
+              </PaginationItem>
+              
+              {renderPaginationItems()}
+
+              <PaginationItem>
+                <PaginationNext 
+                  onClick={() => page < totalPages && setPage(page + 1)}
+                  aria-disabled={page >= totalPages}
+                  className={page >= totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+          <div className="mt-4 text-center text-xs text-[var(--secondary)]">
+            Page {page} of {totalPages}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
