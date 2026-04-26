@@ -235,3 +235,87 @@ describe('ReportsService — idempotency & replay safety (#780)', () => {
     expect(result).toBe(newReport);
   });
 });
+
+describe('ReportsService — DTO validation & abuse edge cases (#733)', () => {
+  it('CreateReportDto trims whitespace from reason field', () => {
+    const { plainToInstance } = require('class-transformer');
+    const { validate } = require('class-validator');
+    const { CreateReportDto } = require('./dto/create-report.dto');
+
+    const dto = plainToInstance(CreateReportDto, {
+      type: ReportType.SPAM,
+      reason: '   lots of spaces   ',
+    });
+
+    expect(dto.reason).toBe('lots of spaces');
+  });
+
+  it('CreateReportDto rejects a reason that is whitespace-only after trim', async () => {
+    const { plainToInstance } = require('class-transformer');
+    const { validate } = require('class-validator');
+    const { CreateReportDto } = require('./dto/create-report.dto');
+
+    const dto = plainToInstance(CreateReportDto, {
+      type: ReportType.SPAM,
+      reason: '   ',
+    });
+
+    const errors = await validate(dto);
+    const reasonErrors = errors.filter((e: any) => e.property === 'reason');
+    expect(reasonErrors.length).toBeGreaterThan(0);
+  });
+
+  it('CreateReportDto rejects reason exceeding 500 characters', async () => {
+    const { plainToInstance } = require('class-transformer');
+    const { validate } = require('class-validator');
+    const { CreateReportDto } = require('./dto/create-report.dto');
+
+    const dto = plainToInstance(CreateReportDto, {
+      type: ReportType.SPAM,
+      reason: 'x'.repeat(501),
+    });
+
+    const errors = await validate(dto);
+    const reasonErrors = errors.filter((e: any) => e.property === 'reason');
+    expect(reasonErrors.length).toBeGreaterThan(0);
+  });
+
+  it('CreateReportDto accepts valid reason within 500 characters', async () => {
+    const { plainToInstance } = require('class-transformer');
+    const { validate } = require('class-validator');
+    const { CreateReportDto } = require('./dto/create-report.dto');
+
+    const dto = plainToInstance(CreateReportDto, {
+      type: ReportType.SPAM,
+      reason: 'This is a valid short reason.',
+    });
+
+    const errors = await validate(dto);
+    const reasonErrors = errors.filter((e: any) => e.property === 'reason');
+    expect(reasonErrors.length).toBe(0);
+  });
+
+  it('CreateReportDto accepts missing reason (optional field)', async () => {
+    const { plainToInstance } = require('class-transformer');
+    const { validate } = require('class-validator');
+    const { CreateReportDto } = require('./dto/create-report.dto');
+
+    const dto = plainToInstance(CreateReportDto, { type: ReportType.SPAM });
+
+    const errors = await validate(dto);
+    const reasonErrors = errors.filter((e: any) => e.property === 'reason');
+    expect(reasonErrors.length).toBe(0);
+  });
+
+  it('CreateReportDto rejects an invalid report type', async () => {
+    const { plainToInstance } = require('class-transformer');
+    const { validate } = require('class-validator');
+    const { CreateReportDto } = require('./dto/create-report.dto');
+
+    const dto = plainToInstance(CreateReportDto, { type: 'not-a-valid-type' });
+
+    const errors = await validate(dto);
+    const typeErrors = errors.filter((e: any) => e.property === 'type');
+    expect(typeErrors.length).toBeGreaterThan(0);
+  });
+});

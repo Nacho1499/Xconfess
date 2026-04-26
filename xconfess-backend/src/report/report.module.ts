@@ -7,7 +7,6 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { AuthModule } from '../auth/auth.module';
 import { ReportsService } from './reports.service';
 import { ReportsController } from './reports.controller';
-import { AdminReportsController } from './admin-reports.controller';
 
 @Module({
   imports: [
@@ -16,7 +15,7 @@ import { AdminReportsController } from './admin-reports.controller';
     AuthModule,
   ],
   providers: [ReportsService],
-  controllers: [ReportsController, AdminReportsController],
+  controllers: [ReportsController],
   exports: [ReportsService],
 })
 export class ReportModule {}

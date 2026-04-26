@@ -876,6 +876,23 @@ export class ConfessionService {
       );
     }
 
+    // A stellarTxHash without isAnchored means a prior submission is pending
+    // on-chain. Return the existing pending state instead of starting new work.
+    if (confession.stellarTxHash && !confession.isAnchored) {
+      return {
+        confessionId: confession.id,
+        stellarTxHash: confession.stellarTxHash,
+        stellarHash: confession.stellarHash,
+        isAnchored: false,
+        anchorPending: true,
+        message:
+          'An anchor submission is already pending for this confession. Wait for it to confirm or fail before retrying.',
+        stellarExplorerUrl: this.stellarService.getExplorerUrl(
+          confession.stellarTxHash,
+        ),
+      };
+    }
+
     if (!this.stellarService.isValidTxHash(dto.stellarTxHash)) {
       throw new BadRequestException('Invalid Stellar transaction hash format');
     }
@@ -891,12 +908,11 @@ export class ConfessionService {
       throw new BadRequestException('Failed to process anchoring data');
     }
 
-    // Update confession with Stellar data
+    // Persist as pending: the transaction hash is recorded but isAnchored stays
+    // false until verifyStellarAnchor confirms the chain result.
     await this.confessionRepo.update(id, {
       stellarTxHash: anchorData.stellarTxHash,
       stellarHash: anchorData.stellarHash,
-      isAnchored: true,
-      anchoredAt: anchorData.anchoredAt,
     });
 
     const updated = await this.confessionRepo.findOne({ where: { id } });
@@ -906,6 +922,7 @@ export class ConfessionService {
 
     return {
       ...updated,
+      anchorPending: true,
       stellarExplorerUrl: this.stellarService.getExplorerUrl(dto.stellarTxHash),
     };
   }
@@ -922,9 +939,11 @@ export class ConfessionService {
       throw new NotFoundException(`Confession ${id} not found`);
     }
 
-    if (!confession.isAnchored || !confession.stellarTxHash) {
+    // Not yet submitted to Stellar at all
+    if (!confession.stellarTxHash) {
       return {
         isAnchored: false,
+        anchorPending: false,
         message: 'Confession is not anchored on Stellar',
       };
     }
@@ -933,8 +952,20 @@ export class ConfessionService {
       confession.stellarTxHash,
     );
 
+    // Pending anchor confirmed on-chain: promote to fully anchored
+    if (!confession.isAnchored && isVerified) {
+      const now = new Date();
+      await this.confessionRepo.update(confession.id, {
+        isAnchored: true,
+        anchoredAt: now,
+      });
+      confession.isAnchored = true;
+      confession.anchoredAt = now;
+    }
+
     return {
-      isAnchored: true,
+      isAnchored: confession.isAnchored,
+      anchorPending: !confession.isAnchored,
       isVerified,
       stellarTxHash: confession.stellarTxHash,
       stellarHash: confession.stellarHash,
