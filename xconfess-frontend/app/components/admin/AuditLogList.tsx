@@ -3,12 +3,11 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { adminApi, AuditLog } from "@/app/lib/api/admin";
-import { useGlobalToast } from "@/app/components/common/Toast";
-import { exportToCSV } from "@/app/lib/utils/csvExport";
+import { useExportCSV } from "@/app/lib/hooks/useExportCSV";
 import { queryKeys } from "@/app/lib/api/queryKeys";
 
 export default function AuditLogList() {
-  const toast = useGlobalToast();
+  const { triggerExport } = useExportCSV({ label: 'audit logs' });
   const [actionFilter, setActionFilter] = useState<string>("all");
   const [entityTypeFilter, setEntityTypeFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
@@ -97,15 +96,10 @@ export default function AuditLogList() {
               notes: log.notes || "",
               createdAt: new Date(log.createdAt).toLocaleString(),
             }));
-            const exported = exportToCSV(
+            triggerExport(
               exportData,
               `audit-logs-${new Date().toISOString().split("T")[0]}.csv`,
             );
-            if (!exported) {
-              toast.warning("No audit logs available to export.");
-              return;
-            }
-            toast.success("Audit logs CSV exported.");
           }}
           className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 text-sm"
         >
