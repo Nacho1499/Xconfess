@@ -333,8 +333,6 @@ The following list matches active `@Controller(...)` + method decorators.
 | PATCH | `/api/admin/users/:id/unban` |
 | GET | `/api/admin/analytics` |
 | GET | `/api/admin/audit-logs` |
-| GET | `/api/admin/reports` (second controller also defines this) |
-| PATCH | `/api/admin/reports/:id/resolve` (second controller also defines this) |
 | GET | `/api/admin/moderation/pending` |
 | POST | `/api/admin/moderation/review/:id` |
 | GET | `/api/admin/moderation/stats` |
@@ -390,4 +388,4 @@ Current backend uses pluralized routes and the exact inventory above.
 - Prefer `/api/users/*` for user lifecycle endpoints.
 - `/api/auth/*` remains active for auth-centric operations and password-reset flow.
 - Report submission endpoint supports anonymous and authenticated modes through optional JWT.
-- Some admin/report routes are currently duplicated by two controllers; avoid assuming only one handler implementation exists.
+- All `/api/admin/reports*` routes are owned exclusively by `AdminController` (`src/admin/admin.controller.ts`). `AdminReportsController` has been removed to eliminate duplicate route registration.

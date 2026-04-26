@@ -173,4 +173,23 @@ describe("Admin layout - authentication redirect behaviour", () => {
 
     expect(window.localStorage.setItem).not.toHaveBeenCalled();
   });
+
+  it("does not redirect while authentication is still loading", async () => {
+    setAuthState({ user: null, isAuthenticated: false, isLoading: true });
+
+    await renderLayout();
+
+    // Redirect must not fire while the session is being resolved
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("redirects to /login after loading completes with no session", async () => {
+    setAuthState({ user: null, isAuthenticated: false, isLoading: false });
+
+    await renderLayout();
+
+    await waitFor(() => {
+      expect(mockReplace).toHaveBeenCalledWith("/login");
+    });
+  });
 });
