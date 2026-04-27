@@ -49,6 +49,8 @@ export class ModerationRepositoryService {
       result: ModerationResult;
       deliveryHash: string;
       deliveryTimestamp: string;
+      signatureValid?: boolean;
+      payloadMalformed?: boolean;
     },
     manager?: EntityManager,
   ): Promise<{ log: ModerationLog; isIdempotent: boolean }> {
@@ -89,6 +91,8 @@ export class ModerationRepositoryService {
         deliveryHash: params.deliveryHash,
         timestamp: params.deliveryTimestamp,
         processedAt: new Date().toISOString(),
+        signatureValid: params.signatureValid ?? true,
+        payloadMalformed: params.payloadMalformed ?? false,
       },
     };
 
