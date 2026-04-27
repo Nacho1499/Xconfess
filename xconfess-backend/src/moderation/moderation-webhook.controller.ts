@@ -7,6 +7,7 @@ import {
   Logger,
   Post,
   UnauthorizedException,
+  BadRequestException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -51,11 +52,24 @@ export class ModerationWebhookController {
     @Body() payload: WebhookPayload,
     @Headers('x-webhook-signature') signature: string,
   ) {
+    // Issue #782: Enhanced signature validation and malformed payload handling
     const serializedPayload = JSON.stringify(payload);
+
+    // Validate signature first
+    if (!signature) {
+      this.logger.warn('Missing moderation webhook signature');
+      throw new UnauthorizedException('Missing signature');
+    }
 
     if (!this.verifySignature(serializedPayload, signature)) {
       this.logger.warn('Invalid moderation webhook signature');
       throw new UnauthorizedException('Invalid signature');
+    }
+
+    // Validate payload structure
+    if (!payload.confessionId || !payload.moderationStatus) {
+      this.logger.error('Malformed moderation webhook payload', { payload });
+      throw new BadRequestException('Malformed payload: missing required fields');
     }
 
     const requiresReview =
@@ -81,6 +95,7 @@ export class ModerationWebhookController {
           return { status: 'not_found' as const };
         }
 
+        // Issue #782: Idempotent webhook processing with delivery hash
         const { isIdempotent } =
           await this.moderationRepoService.syncWebhookResult(
             {
@@ -89,6 +104,8 @@ export class ModerationWebhookController {
               result: moderationResult,
               deliveryHash,
               deliveryTimestamp: payload.timestamp,
+              signatureValid: true,
+              payloadMalformed: false,
             },
             manager,
           );

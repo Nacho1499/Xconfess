@@ -59,6 +59,27 @@ export class Tip {
   @Column({ name: 'rejection_reason', type: 'text', nullable: true })
   rejectionReason: string | null;
 
+  @Column({ name: 'retry_count', type: 'int', default: 0 })
+  retryCount: number;
+
+  @Column({ name: 'last_chain_status', type: 'varchar', length: 50, nullable: true })
+  lastChainStatus: string | null;
+
+  @Column({ name: 'last_checked_at', type: 'timestamp', nullable: true })
+  lastCheckedAt: Date | null;
+
+  @Column({ name: 'reconciliation_metadata', type: 'jsonb', nullable: true })
+  reconciliationMetadata: Record<string, any> | null;
+
+  @Column({ name: 'processing_lock', type: 'varchar', length: 64, nullable: true })
+  processingLock: string | null;
+
+  @Column({ name: 'locked_at', type: 'timestamp', nullable: true })
+  lockedAt: Date | null;
+
+  @Column({ name: 'locked_by', type: 'varchar', length: 100, nullable: true })
+  lockedBy: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

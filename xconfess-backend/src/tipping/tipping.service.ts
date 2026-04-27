@@ -3,13 +3,15 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, IsNull } from 'typeorm';
 import { Tip, TipVerificationStatus } from './entities/tip.entity';
 import { AnonymousConfession } from '../confession/entities/confession.entity';
 import { StellarService } from '../stellar/stellar.service';
 import { VerifyTipDto } from './dto/verify-tip.dto';
+import * as crypto from 'crypto';
 
 export interface TipStats {
   totalAmount: number;
@@ -38,6 +40,8 @@ interface ProcessedTransactionData {
 @Injectable()
 export class TippingService {
   private static readonly MAX_RECEIPT_PROOF_METADATA_LEN = 128;
+  private static readonly LOCK_TIMEOUT_MS = 30000; // 30 seconds
+  private readonly logger = new Logger(TippingService.name);
 
   constructor(
     @InjectRepository(Tip)
@@ -103,6 +107,112 @@ export class TippingService {
   }
 
   /**
+   * Acquire a processing lock for a tip to prevent concurrent verify/reconciliation races
+   * Issue #784: Preserve single-credit semantics
+   */
+  private async acquireProcessingLock(
+    txId: string,
+    processType: 'verify' | 'reconciliation',
+  ): Promise<{ success: boolean; existingTip?: Tip }> {
+    const lockId = crypto.randomBytes(16).toString('hex');
+    const now = new Date();
+
+    return await this.tipRepository.manager.transaction(async (manager) => {
+      const tipRepo = manager.getRepository(Tip);
+
+      // Check if tip already exists
+      const existingTip = await tipRepo.findOne({
+        where: { txId },
+      });
+
+      if (existingTip) {
+        // Tip already processed - return it for idempotent response
+        if (existingTip.verificationStatus === TipVerificationStatus.VERIFIED) {
+          return { success: false, existingTip };
+        }
+
+        // Check if there's an active lock
+        if (existingTip.processingLock) {
+          const lockAge = now.getTime() - (existingTip.lockedAt?.getTime() || 0);
+          
+          // If lock is stale (older than timeout), we can steal it
+          if (lockAge < TippingService.LOCK_TIMEOUT_MS) {
+            this.logger.warn(
+              `Tip ${txId} is already being processed by ${existingTip.lockedBy}`,
+            );
+            return { success: false, existingTip };
+          }
+
+          this.logger.warn(
+            `Stealing stale lock on tip ${txId} from ${existingTip.lockedBy}`,
+          );
+        }
+
+        // Acquire or update lock
+        await tipRepo.update(existingTip.id, {
+          processingLock: lockId,
+          lockedAt: now,
+          lockedBy: processType,
+          retryCount: existingTip.retryCount + 1,
+          lastCheckedAt: now,
+        });
+
+        return { success: true };
+      }
+
+      // Create new pending tip with lock
+      const newTip = tipRepo.create({
+        txId,
+        verificationStatus: TipVerificationStatus.PENDING,
+        processingLock: lockId,
+        lockedAt: now,
+        lockedBy: processType,
+        retryCount: 0,
+        lastCheckedAt: now,
+      });
+
+      await tipRepo.save(newTip);
+      return { success: true };
+    });
+  }
+
+  /**
+   * Release processing lock after completion
+   */
+  private async releaseProcessingLock(txId: string): Promise<void> {
+    await this.tipRepository.update(
+      { txId },
+      {
+        processingLock: null,
+        lockedAt: null,
+        lockedBy: null,
+      },
+    );
+  }
+
+  /**
+   * Update retry metadata for debugging and reconciliation
+   * Issue #777: Persist retry metadata
+   */
+  private async updateRetryMetadata(
+    txId: string,
+    chainStatus: string,
+    metadata?: Record<string, any>,
+  ): Promise<void> {
+    const now = new Date();
+    await this.tipRepository
+      .createQueryBuilder()
+      .update(Tip)
+      .set({
+        lastChainStatus: chainStatus,
+        lastCheckedAt: now,
+        reconciliationMetadata: metadata || {},
+      })
+      .where('txId = :txId', { txId })
+      .execute();
+  }
+
+  /**
    * Get all tips for a confession
    */
   async getTipsByConfessionId(confessionId: string): Promise<Tip[]> {
@@ -134,6 +244,8 @@ export class TippingService {
   /**
    * Verify a tip transaction on-chain and record it
    * Implements idempotency: duplicate requests return existing tip, conflicting payloads are rejected
+   * Issue #784: Uses locking to prevent double-crediting during concurrent verify/reconciliation
+   * Issue #777: Updates retry metadata for debugging
    */
   async verifyAndRecordTip(
     confessionId: string,
@@ -150,67 +262,125 @@ export class TippingService {
       );
     }
 
-    // Check if tip already exists for this transaction
-    const existingTip = await this.tipRepository.findOne({
-      where: { txId: dto.txId },
-    });
+    // Acquire processing lock to prevent race conditions
+    const lockResult = await this.acquireProcessingLock(dto.txId, 'verify');
 
-    // If tip exists, return it as idempotent response
-    if (existingTip) {
-      // Check for conflicting payload (same txId, different confessionId)
-      if (existingTip.confessionId !== confessionId) {
+    if (!lockResult.success && lockResult.existingTip) {
+      // Tip already exists - check for conflicts
+      if (lockResult.existingTip.confessionId !== confessionId) {
         throw new ConflictException(
           `Transaction ${dto.txId} was already used for a different confession. ` +
-            `Original confession: ${existingTip.confessionId}`,
+            `Original confession: ${lockResult.existingTip.confessionId}`,
         );
       }
 
       // Return existing tip - safe retry
       return {
-        tip: existingTip,
+        tip: lockResult.existingTip,
         isNew: false,
         isIdempotent: true,
       };
     }
 
-    // Verify transaction on-chain
-    const isValid = await this.stellarService.verifyTransaction(dto.txId);
-
-    if (!isValid) {
-      throw new BadRequestException(
-        'Transaction not found or invalid on Stellar network',
+    if (!lockResult.success) {
+      // Another process is currently handling this tip
+      throw new ConflictException(
+        `Transaction ${dto.txId} is currently being processed. Please retry in a moment.`,
       );
     }
 
-    // Fetch transaction details from Horizon to get amount and sender
-    const txData = await this.fetchTransactionData(dto.txId);
-    const processedData = await this.processTransactionData(txData, dto.txId);
+    try {
+      // Verify transaction on-chain
+      const isValid = await this.stellarService.verifyTransaction(dto.txId);
 
-    // Minimum tip amount check (0.1 XLM)
-    const MIN_TIP_AMOUNT = 0.1;
-    if (processedData.amount < MIN_TIP_AMOUNT) {
-      throw new BadRequestException(
-        `Tip amount ${processedData.amount} XLM is below minimum of ${MIN_TIP_AMOUNT} XLM`,
-      );
+      if (!isValid) {
+        await this.updateRetryMetadata(dto.txId, 'not_found', {
+          error: 'Transaction not found on chain',
+          attemptedAt: new Date().toISOString(),
+        });
+        await this.releaseProcessingLock(dto.txId);
+        throw new BadRequestException(
+          'Transaction not found or invalid on Stellar network',
+        );
+      }
+
+      // Fetch transaction details from Horizon to get amount and sender
+      const txData = await this.fetchTransactionData(dto.txId);
+      const processedData = await this.processTransactionData(txData, dto.txId);
+
+      // Minimum tip amount check (0.1 XLM)
+      const MIN_TIP_AMOUNT = 0.1;
+      if (processedData.amount < MIN_TIP_AMOUNT) {
+        await this.updateRetryMetadata(dto.txId, 'invalid_amount', {
+          amount: processedData.amount,
+          minRequired: MIN_TIP_AMOUNT,
+        });
+        await this.releaseProcessingLock(dto.txId);
+        throw new BadRequestException(
+          `Tip amount ${processedData.amount} XLM is below minimum of ${MIN_TIP_AMOUNT} XLM`,
+        );
+      }
+
+      // Update or create tip with verified status
+      const existingTip = await this.tipRepository.findOne({
+        where: { txId: dto.txId },
+      });
+
+      let savedTip: Tip;
+
+      if (existingTip) {
+        // Update existing pending tip
+        existingTip.confessionId = confessionId;
+        existingTip.amount = processedData.amount;
+        existingTip.senderAddress = processedData.senderAddress;
+        existingTip.verificationStatus = TipVerificationStatus.VERIFIED;
+        existingTip.verifiedAt = new Date();
+        existingTip.lastChainStatus = 'verified';
+        existingTip.lastCheckedAt = new Date();
+        existingTip.reconciliationMetadata = {
+          verifiedBy: 'user_request',
+          processedData: {
+            amount: processedData.amount,
+            senderAddress: processedData.senderAddress,
+          },
+        };
+        savedTip = await this.tipRepository.save(existingTip);
+      } else {
+        // Create new tip
+        const tip = this.tipRepository.create({
+          confessionId,
+          amount: processedData.amount,
+          txId: dto.txId,
+          senderAddress: processedData.senderAddress,
+          verificationStatus: TipVerificationStatus.VERIFIED,
+          verifiedAt: new Date(),
+          lastChainStatus: 'verified',
+          lastCheckedAt: new Date(),
+          retryCount: 0,
+          reconciliationMetadata: {
+            verifiedBy: 'user_request',
+            processedData: {
+              amount: processedData.amount,
+              senderAddress: processedData.senderAddress,
+            },
+          },
+        });
+        savedTip = await this.tipRepository.save(tip);
+      }
+
+      // Release lock after successful processing
+      await this.releaseProcessingLock(dto.txId);
+
+      return {
+        tip: savedTip,
+        isNew: !existingTip,
+        isIdempotent: false,
+      };
+    } catch (error) {
+      // Release lock on error
+      await this.releaseProcessingLock(dto.txId);
+      throw error;
     }
-
-    // Create and save tip
-    const tip = this.tipRepository.create({
-      confessionId,
-      amount: processedData.amount,
-      txId: dto.txId,
-      senderAddress: processedData.senderAddress,
-      verificationStatus: TipVerificationStatus.VERIFIED,
-      verifiedAt: new Date(),
-    });
-
-    const savedTip = await this.tipRepository.save(tip);
-
-    return {
-      tip: savedTip,
-      isNew: true,
-      isIdempotent: false,
-    };
   }
 
   private async fetchTransactionData(txId: string): Promise<any> {
