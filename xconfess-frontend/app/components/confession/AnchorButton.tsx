@@ -1,3 +1,38 @@
+
+'use client';
+
+import { useState } from 'react';
+import apiclient from '@/app/lib/api/client';
+
+export default function AnchorButton() {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleAnchor = async () => {
+    if (isSubmitting) return; // prevent duplicate clicks
+
+    try {
+      setIsSubmitting(true);
+
+      await apiclient.post('/confessions/anchor', {});
+
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleAnchor}
+      disabled={isSubmitting}
+      className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+    >
+      {isSubmitting ? 'Anchoring...' : 'Anchor'}
+    </button>
+  );
+}
+=======
 "use client";
 
 import { useState } from "react";
@@ -80,7 +115,7 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
 
     setIsAnchoring(true);
 
-    // ✅ Create activity FIRST
+    //  Create activity FIRST
     const activityId = uuidv4();
     addActivity({
       id: activityId,
@@ -148,7 +183,7 @@ export const AnchorButton: React.FC<AnchorButtonProps> = ({
     }
   };
 
-  // ✅ Already anchored UI
+  //  Already anchored UI
   if (anchored && txHash) {
     return (
       <div className={cn("flex items-center gap-2", className)}>
