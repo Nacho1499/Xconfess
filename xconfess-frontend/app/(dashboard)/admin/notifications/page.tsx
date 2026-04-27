@@ -9,6 +9,7 @@ import { TableSkeleton } from '@/app/components/common/SkeletonLoader';
 import type { FailedNotificationJob, FailedJobsFilter } from '@/app/lib/types/notification-jobs';
 import { useDebounce } from '@/app/lib/hooks/useDebounce';
 import { useAdminConfirmation } from '@/app/components/admin/useAdminConfirmation';
+import { useDLQFilterState } from '@/app/lib/hooks/useDLQFilterState';
 
 export default function NotificationsPage() {
   return (
@@ -30,15 +31,22 @@ export default function NotificationsPage() {
 
 function FailedJobsList() {
   const queryClient = useQueryClient();
-  const [page, setPage] = useState(1);
-  const [statusFilter, setStatusFilter] = useState<'failed' | 'all'>('failed');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [minRetries, setMinRetries] = useState<number | undefined>(undefined);
+  const {
+    page,
+    setPage,
+    statusFilter,
+    setStatusFilter,
+    startDate,
+    setStartDate,
+    endDate,
+    setEndDate,
+    minRetries,
+    setMinRetries,
+  } = useDLQFilterState();
   const [pendingReplays, setPendingReplays] = useState<Set<string>>(new Set());
   const { openConfirmation, confirmDialog } = useAdminConfirmation();
 
-  // Debounce filter changes to avoid excessive API calls
+  // Debounce date values to avoid excessive API calls while typing
   const debouncedStartDate = useDebounce(startDate, 500);
   const debouncedEndDate = useDebounce(endDate, 500);
 
@@ -137,10 +145,6 @@ function FailedJobsList() {
     });
   }, [openConfirmation, pendingReplays, replayMutation]);
 
-  const handleFilterChange = useCallback(() => {
-    setPage(1); // Reset to first page when filters change
-  }, []);
-
   const totalPages = data ? Math.ceil(data.total / (filter.limit || 20)) : 0;
 
   if (error) {
@@ -178,14 +182,14 @@ function FailedJobsList() {
       <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-4">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label htmlFor="dlq-status" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               Status
             </label>
             <select
+              id="dlq-status"
               value={statusFilter}
               onChange={(e) => {
                 setStatusFilter(e.target.value as 'failed' | 'all');
-                handleFilterChange();
               }}
               className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white dark:border-gray-600"
             >
@@ -195,47 +199,47 @@ function FailedJobsList() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label htmlFor="dlq-start-date" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               Start Date
             </label>
             <input
+              id="dlq-start-date"
               type="date"
               value={startDate}
               onChange={(e) => {
                 setStartDate(e.target.value);
-                handleFilterChange();
               }}
               className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white dark:border-gray-600"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label htmlFor="dlq-end-date" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               End Date
             </label>
             <input
+              id="dlq-end-date"
               type="date"
               value={endDate}
               onChange={(e) => {
                 setEndDate(e.target.value);
-                handleFilterChange();
               }}
               className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white dark:border-gray-600"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            <label htmlFor="dlq-min-retries" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               Min Retries
             </label>
             <input
+              id="dlq-min-retries"
               type="number"
               min="0"
               value={minRetries ?? ''}
               onChange={(e) => {
                 const val = e.target.value ? parseInt(e.target.value, 10) : undefined;
                 setMinRetries(val);
-                handleFilterChange();
               }}
               placeholder="Any"
               className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white dark:border-gray-600"
@@ -365,7 +369,7 @@ function FailedJobsList() {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              onClick={() => setPage(Math.max(1, page - 1))}
               disabled={page === 1}
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -375,7 +379,7 @@ function FailedJobsList() {
               Page {page} of {totalPages}
             </span>
             <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              onClick={() => setPage(Math.min(totalPages, page + 1))}
               disabled={page === totalPages}
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
