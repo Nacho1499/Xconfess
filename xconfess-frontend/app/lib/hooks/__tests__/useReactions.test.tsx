@@ -178,4 +178,63 @@ describe("useReactions", () => {
     expect(result.current.optimisticState).toBe(null);
     expect(result.current.error?.message).toBe("Reaction failed");
   });
+
+  it("rolls back the feed list cache when the reaction API fails (feed surface)", async () => {
+    const { queryClient, wrapper } = createTestHarness();
+
+    // Seed only the list cache — simulates a user reacting from the feed page
+    // without having previously visited the detail page.
+    const listKey = queryKeys.confessions.list({});
+    queryClient.setQueryData<InfiniteData<GetConfessionsResult>>(listKey, {
+      pageParams: [1],
+      pages: [{ confessions: [buildConfession()], hasMore: false, page: 1 }],
+    });
+
+    mockAddReaction.mockResolvedValue({
+      ok: false,
+      error: { message: "Server error", code: "API_ERROR" },
+    });
+
+    const { result } = renderHook(
+      () => useReactions({ initialCounts: { like: 2, love: 1 } }),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.addReaction("confession-1", "like");
+    });
+
+    const rolledBack = queryClient.getQueryData<InfiniteData<GetConfessionsResult>>(listKey);
+    expect(rolledBack?.pages[0].confessions[0].reactions).toEqual({ like: 2, love: 1 });
+    expect(result.current.optimisticState).toBeNull();
+    expect(result.current.error?.message).toBe("Server error");
+  });
+
+  it("rolls back the detail cache when the reaction API fails (detail surface)", async () => {
+    const { queryClient, wrapper } = createTestHarness();
+
+    // Seed only the detail cache — simulates a user reacting from the
+    // confession detail page without the feed being loaded in memory.
+    const detailKey = queryKeys.confessions.detail("confession-1");
+    queryClient.setQueryData<GetConfessionByIdResult>(detailKey, { ...buildConfession() });
+
+    mockAddReaction.mockResolvedValue({
+      ok: false,
+      error: { message: "Server error", code: "API_ERROR" },
+    });
+
+    const { result } = renderHook(
+      () => useReactions({ initialCounts: { like: 2, love: 1 } }),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.addReaction("confession-1", "love");
+    });
+
+    const rolledBack = queryClient.getQueryData<GetConfessionByIdResult>(detailKey);
+    expect(rolledBack?.reactions).toEqual({ like: 2, love: 1 });
+    expect(result.current.optimisticState).toBeNull();
+    expect(result.current.error?.message).toBe("Server error");
+  });
 });
