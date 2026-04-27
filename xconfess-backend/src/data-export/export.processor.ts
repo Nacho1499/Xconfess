@@ -1,8 +1,8 @@
-import { Process, Processor } from '@nestjs/bull';
-import { Job } from 'bull';
+import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Job } from 'bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import * as archiver from 'archiver';
+import archiver from 'archiver';
 import * as crypto from 'crypto';
 import { Writable } from 'stream';
 import { ExportRequest } from './entities/export-request.entity';
@@ -12,9 +12,10 @@ import { DataExportService } from './data-export.service';
 import { EmailService } from '../email/email.service';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EXPORT_QUEUE_NAME } from './data-export.constants';
 
-@Processor('export-queue')
-export class ExportProcessor {
+@Processor(EXPORT_QUEUE_NAME)
+export class ExportProcessor extends WorkerHost {
   private readonly logger = new Logger(ExportProcessor.name);
   private readonly CHUNK_SIZE_LIMIT = 10 * 1024 * 1024; // 10MB per chunk
 
@@ -28,10 +29,12 @@ export class ExportProcessor {
     private dataExportService: DataExportService,
     private emailService: EmailService,
     private configService: ConfigService,
-  ) {}
+  ) {
+    super();
+  }
 
-  @Process('process-export')
-  async handleExport(job: Job<{ userId: string; requestId: string }>) {
+  async process(job: Job<{ userId: string; requestId: string }>) {
+    if (job.name !== 'process-export') return;
     const { userId, requestId } = job.data;
 
     try {
@@ -59,7 +62,6 @@ export class ExportProcessor {
         id: parseInt(userId),
       });
       if (user && user.emailEncrypted) {
-        const settingsUrl = `${this.configService.get<string>('app.frontendUrl', 'http://localhost:3000')}/settings/data-export`;
         await this.emailService.sendWelcomeEmail(
           user.emailEncrypted,
           user.username,
@@ -70,12 +72,10 @@ export class ExportProcessor {
         `Chunked export ${requestId} completed with ${result.chunkCount} chunks.`,
       );
     } catch (error) {
-      this.logger.error(`Export ${requestId} failed: ${error.message}`);
+      const message = error instanceof Error ? error.message : 'unknown error';
+      this.logger.error(`Export ${requestId} failed: ${message}`);
       // Use the service helper so retryCount and lastFailureReason are persisted
-      await this.dataExportService.markExportFailed(
-        requestId,
-        error.message ?? 'unknown error',
-      );
+      await this.dataExportService.markExportFailed(requestId, message);
     }
   }
 
@@ -88,7 +88,7 @@ export class ExportProcessor {
     combinedChecksum: string;
   }> {
     return new Promise((resolve, reject) => {
-      const archive = (archiver as any)('zip', { zlib: { level: 9 } });
+      const archive = archiver('zip', { zlib: { level: 9 } });
       const combinedHash = crypto.createHash('sha256');
       let chunkCount = 0;
       let totalSize = 0;

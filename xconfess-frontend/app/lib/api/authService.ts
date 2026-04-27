@@ -1,8 +1,10 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import {
-    AppError, getStatusMessage,
+    AppError,
+    getStatusMessage,
     getStatusCodeString,
     logError,
+    LOGIN_ATTEMPT_FAILED_MESSAGE,
     toAppError
 } from '@/app/lib/utils/errorHandler';
 import {
@@ -12,8 +14,13 @@ import {
     RegisterResponse,
     User,
 } from '../types/auth';
+import {
+    NormalizedAuthError,
+    getAuthErrorMessage,
+} from '@/lib/normalizeAuthError';
+import { getApiBaseUrl } from '@/app/lib/config';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+const API_URL = getApiBaseUrl();
 
 /**
  * Axios instance for API calls
@@ -44,19 +51,16 @@ apiClient.interceptors.request.use(
 
 /**
  * Response interceptor to handle 401 errors (token expiration)
+ * Note: 401 redirects are now handled deterministically by AuthGuard
+ * to prevent flicker and ensure consistent recovery paths
  */
 apiClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     if (error.response?.status === 401) {
-      // Session expired or invalid
-      // We'll trigger a logout on the session API to be sure
+      // Session expired or invalid - clear session cookie
+      // AuthGuard will handle the deterministic redirect
       await fetch('/api/auth/session', { method: 'DELETE' }).catch(() => { });
-
-      // Redirect to login if not already there
-      if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
-        window.location.href = '/login';
-      }
     }
     return Promise.reject(error);
   }
@@ -81,14 +85,36 @@ export const authApi = {
 
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
+        
+        // Check if response is a normalized auth error from the proxy route
+        if (isNormalizedAuthError(body)) {
+          const normalized = body as NormalizedAuthError;
+          const message = getAuthErrorMessage(normalized);
+          const appError = new AppError(message, normalized.code, response.status, {
+            responseBody: body,
+            path: '/api/auth/session',
+            normalized,
+          });
+          logError(appError, 'authApi.login', { status: response.status });
+          throw appError;
+        }
+
+        // Fallback to old error parsing if not normalized
         const status = response.status;
+        const rawApi =
+          (body && ((body as any).message || (body as any).error)) || null;
         const message =
-          (body && ((body as any).message || (body as any).error)) ||
-          getStatusMessage(status);
+          status === 401
+            ? LOGIN_ATTEMPT_FAILED_MESSAGE
+            : typeof rawApi === 'string' && rawApi.trim().length > 0
+              ? rawApi
+              : getStatusMessage(status);
         const code = getStatusCodeString(status);
         const apiError = new AppError(message, code, status, {
           responseBody: body,
           path: '/api/auth/session',
+          upstreamMessage:
+            typeof rawApi === 'string' ? rawApi : undefined,
         });
         logError(apiError, 'authApi.login', { status, url: '/api/auth/session' });
         throw apiError;
@@ -130,6 +156,22 @@ export const authApi = {
     try {
       const response = await fetch('/api/auth/session');
       if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        
+        // Check if response is a normalized auth error from the proxy route
+        if (isNormalizedAuthError(body)) {
+          const normalized = body as NormalizedAuthError;
+          const message = getAuthErrorMessage(normalized);
+          const appError = new AppError(message, normalized.code, response.status, {
+            responseBody: body,
+            path: '/api/auth/session',
+            normalized,
+          });
+          logError(appError, 'authApi.getCurrentUser', { status: response.status });
+          throw appError;
+        }
+
+        // Fallback to old error parsing
         const status = response.status;
         const message = getStatusMessage(status);
         const code = getStatusCodeString(status);
@@ -159,5 +201,21 @@ export const authApi = {
     await fetch('/api/auth/session', { method: 'DELETE' }).catch(() => { });
   },
 };
+
+/**
+ * Check if an error response is a normalized auth error shape.
+ * Used to detect responses from the new proxy route implementation.
+ */
+function isNormalizedAuthError(body: any): body is NormalizedAuthError {
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    'type' in body &&
+    'code' in body &&
+    'message' in body &&
+    'retryable' in body &&
+    (body.type === 'TRANSIENT' || body.type === 'TERMINAL')
+  );
+}
 
 export default apiClient;

@@ -4,6 +4,9 @@ import * as StellarSDK from '@stellar/stellar-sdk';
 import { StellarConfigService } from './stellar-config.service';
 import { TransactionBuilderService } from './transaction-builder.service';
 import { ITransactionResult } from './interfaces/stellar-config.interface';
+import { AppException } from '../common/errors/app-exception';
+import { ErrorCode } from '../common/errors/error-codes';
+import { HttpStatus } from '@nestjs/common';
 import * as crypto from 'crypto';
 
 export interface AnchorData {
@@ -55,9 +58,14 @@ export class StellarService {
           balance: b.balance,
         }));
       return { native, assets };
-    } catch (error) {
-      this.logger.error(`Failed to get account balance: ${error.message}`);
-      throw new Error(`Account not found or network error: ${error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to get account balance: ${message}`);
+      throw new AppException(
+        `Account not found or network error: ${message}`,
+        ErrorCode.STELLAR_ERROR,
+        HttpStatus.NOT_FOUND,
+      );
     }
   }
 
@@ -76,9 +84,14 @@ export class StellarService {
         envelope: tx.envelope_xdr,
         result: tx.result_xdr,
       };
-    } catch (error) {
-      this.logger.error(`Transaction verification failed: ${error.message}`);
-      throw new Error(`Transaction not found: ${error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Transaction verification failed: ${message}`);
+      throw new AppException(
+        `Transaction not found: ${message}`,
+        ErrorCode.NOT_FOUND,
+        HttpStatus.NOT_FOUND,
+      );
     }
   }
 
@@ -90,7 +103,7 @@ export class StellarService {
       const server = this.stellarConfig.getServer();
       await server.loadAccount(publicKey);
       return true;
-    } catch (error) {
+    } catch {
       return false;
     }
   }
@@ -119,7 +132,10 @@ export class StellarService {
     try {
       const serverSecret = this.configService.get('STELLAR_SERVER_SECRET');
       if (!serverSecret) {
-        throw new Error('Server secret key not configured');
+        throw new AppException(
+          'Server secret key not configured',
+          ErrorCode.INTERNAL_SERVER_ERROR,
+        );
       }
       const serverKeypair = StellarSDK.Keypair.fromSecret(serverSecret);
       const tx = await this.txBuilder.buildPaymentTransaction(
@@ -135,8 +151,9 @@ export class StellarService {
         hash: result.hash,
         success: result.successful,
       };
-    } catch (error) {
-      this.logger.error(`Payment failed: ${error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Payment failed: ${message}`);
       throw error;
     }
   }
@@ -194,8 +211,9 @@ export class StellarService {
 
       const data = await response.json();
       return data.successful === true;
-    } catch (error) {
-      this.logger.error('Error verifying Stellar transaction:', error);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error verifying Stellar transaction: ${message}`);
       return false;
     }
   }

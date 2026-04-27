@@ -9,8 +9,23 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Send, User as UserIcon, MessageSquare } from 'lucide-react';
+import { Send, User as UserIcon, MessageSquare, WifiOff, RefreshCw } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { useGlobalToast } from '@/app/components/common/Toast';
+
+const DEV_BYPASS_AUTH_ENABLED =
+  process.env.NODE_ENV === 'development' &&
+  process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === 'true';
+
+function isExpectedDevOfflineError(error: unknown): boolean {
+  return (
+    DEV_BYPASS_AUTH_ENABLED &&
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'ERR_NETWORK'
+  );
+}
 
 interface Thread {
   confessionId: string;
@@ -41,6 +56,7 @@ export default function MessagesPage() {
   const [isSending, setIsSending] = useState(false);
   const [threadsError, setThreadsError] = useState<string | null>(null);
   const [messagesError, setMessagesError] = useState<string | null>(null);
+  const toast = useGlobalToast();
 
   const fetchThreads = useCallback(async () => {
     try {
@@ -49,8 +65,13 @@ export default function MessagesPage() {
       const response = await apiClient.get('/messages/threads');
       setThreads(response.data || []);
     } catch (error) {
-      console.error('Failed to fetch threads:', error);
-      setThreadsError('Unable to load conversations. Check your connection and try again.');
+      if (isExpectedDevOfflineError(error)) {
+        console.debug('Skipping expected local messages error while backend is offline.');
+        setThreadsError('Messages will appear once the local backend is running.');
+      } else {
+        console.error('Failed to fetch threads:', error);
+        setThreadsError('Unable to load conversations. Check your connection and try again.');
+      }
     } finally {
       setIsLoadingThreads(false);
     }
@@ -63,8 +84,13 @@ export default function MessagesPage() {
       const response = await apiClient.get(`/messages?confession_id=${confessionId}&sender_id=${senderId}`);
       setMessages(response.data?.messages || []);
     } catch (error) {
-      console.error('Failed to fetch messages:', error);
-      setMessagesError('Unable to load messages for this conversation.');
+      if (isExpectedDevOfflineError(error)) {
+        console.debug('Skipping expected local thread error while backend is offline.');
+        setMessagesError('Messages will appear once the local backend is running.');
+      } else {
+        console.error('Failed to fetch messages:', error);
+        setMessagesError('Unable to load messages for this conversation.');
+      }
     } finally {
       setIsLoadingMessages(false);
     }
@@ -94,7 +120,7 @@ export default function MessagesPage() {
             reply: newMessage.trim(),
           });
         } else {
-          alert("Please wait for the sender to message you again.");
+          toast.warning("Please wait for the sender to message you again.");
           return;
         }
       } else {
@@ -109,6 +135,7 @@ export default function MessagesPage() {
       fetchMessages(selectedThread.confessionId, selectedThread.senderId);
     } catch (error) {
       console.error('Failed to send message:', error);
+      toast.error('Unable to send message right now.');
     } finally {
       setIsSending(false);
     }
@@ -127,9 +154,25 @@ export default function MessagesPage() {
           </div>
           <ScrollArea className="flex-1">
             {threadsError ? (
-              <div className="p-4 text-sm text-red-600">
-                <div className="mb-2">{threadsError}</div>
-                <Button variant="ghost" onClick={() => fetchThreads()}>Retry</Button>
+              <div className="p-8 flex flex-col items-center justify-center text-center space-y-4">
+                <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-full">
+                  <WifiOff className="w-8 h-8 text-amber-500" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Backend Unreachable</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 max-w-[200px]">
+                    Messages will appear once the backend is reachable
+                  </p>
+                </div>
+                <Button 
+                  size="sm" 
+                  variant="secondary" 
+                  onClick={() => fetchThreads()} 
+                  className="mt-2 gap-2"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Retry Fetch
+                </Button>
               </div>
             ) : isLoadingThreads ? (
               <div className="p-4 space-y-4">
@@ -206,9 +249,20 @@ export default function MessagesPage() {
                     <Skeleton className="h-10 w-3/4" />
                   </div>
                 ) : messagesError ? (
-                  <div className="p-4 text-sm text-red-600">
-                    <div className="mb-2">{messagesError}</div>
-                    <Button variant="ghost" onClick={() => selectedThread && fetchMessages(selectedThread.confessionId, selectedThread.senderId)}>Retry</Button>
+                  <div className="p-8 flex flex-col items-center justify-center text-center space-y-4 h-full">
+                    <WifiOff className="w-8 h-8 text-amber-500" />
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Unable to load messages. The backend might be offline.
+                    </p>
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      onClick={() => selectedThread && fetchMessages(selectedThread.confessionId, selectedThread.senderId)}
+                      className="gap-2"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Try Again
+                    </Button>
                   </div>
                 ) : (
                   <div className="space-y-6 pb-4">

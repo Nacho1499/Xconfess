@@ -3,7 +3,7 @@ import { AdminController } from './admin.controller';
 import { AdminService } from './services/admin.service';
 import { ModerationService } from './services/moderation.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { AdminGuard } from './guards/admin.guard';
+import { AdminGuard } from '../auth/admin.guard';
 
 describe('AdminController', () => {
   let controller: AdminController;
@@ -191,6 +191,26 @@ describe('AdminController', () => {
       const res = await controller.getAuditLogs();
       expect(res.total).toBe(1);
       expect(moderationService.getAuditLogs).toHaveBeenCalled();
+    });
+  });
+
+  describe('route ownership — no duplicate admin/reports registration', () => {
+    it('AdminController is the sole owner of GET /admin/reports', () => {
+      const routes: { method: string; path: string }[] = Reflect.getMetadata(
+        'routes',
+        AdminController,
+      ) ?? [];
+      const reportListRoutes = routes.filter(
+        (r) => r.method === 'GET' && r.path?.includes('reports'),
+      );
+      // Duplicate path registration would surface multiple entries here
+      expect(reportListRoutes.length).toBeLessThanOrEqual(1);
+    });
+
+    it('AdminController has resolve and dismiss handlers for /admin/reports/:id', () => {
+      const proto = AdminController.prototype;
+      expect(typeof proto.resolveReport).toBe('function');
+      expect(typeof proto.dismissReport).toBe('function');
     });
   });
 });

@@ -45,9 +45,13 @@ export const envValidationSchema = Joi.object({
   FRONTEND_URL: Joi.string().default('http://localhost:3000'),
 
   // ── Encryption ────────────────────────────────────────────────────────
-  CONFESSION_AES_KEY: Joi.string().length(32).optional().messages({
+  CONFESSION_ENCRYPTION_KEY: Joi.string().hex().length(64).required().messages({
     'string.length':
-      'CONFESSION_AES_KEY must be exactly 32 characters (AES-256).',
+      'CONFESSION_ENCRYPTION_KEY must be exactly 64 characters (32-byte hex).',
+    'string.hex':
+      'CONFESSION_ENCRYPTION_KEY must be a valid hexadecimal string.',
+    'any.required':
+      'CONFESSION_ENCRYPTION_KEY is required for confession security.',
   }),
 
   // ── Stellar ───────────────────────────────────────────────────────────
@@ -62,6 +66,9 @@ export const envValidationSchema = Joi.object({
   REPUTATION_BADGES_CONTRACT_ID: Joi.string().optional(),
   TIPPING_SYSTEM_CONTRACT_ID: Joi.string().optional(),
   STELLAR_SERVER_SECRET: Joi.string().optional(),
+
+  // ── Tipping SLA ────────────────────────────────────────────────────────
+  TIP_VERIFICATION_STALE_THRESHOLD_MINUTES: Joi.number().min(1).default(30),
 
   // ── Email (primary) ──────────────────────────────────────────────────
   MAIL_HOST: Joi.string().default('smtp.ethereal.email'),

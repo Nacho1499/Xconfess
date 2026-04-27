@@ -8,6 +8,7 @@ import { DataExportService } from './data-export.service';
 import { ExportRequest } from './entities/export-request.entity';
 import { ExportChunk } from './entities/export-chunk.entity';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { EXPORT_QUEUE_NAME } from './data-export.constants';
 
 describe('DataExportService', () => {
   let service: DataExportService;
@@ -55,7 +56,7 @@ describe('DataExportService', () => {
           useValue: mockChunkRepository,
         },
         {
-          provide: getQueueToken('export-queue'),
+          provide: getQueueToken(EXPORT_QUEUE_NAME),
           useValue: mockExportQueue,
         },
         {
@@ -237,7 +238,7 @@ describe('DataExportService', () => {
         expect.objectContaining({
           action: 'generation_completed',
           actorType: 'system',
-          actorId: 'export-queue',
+          actorId: EXPORT_QUEUE_NAME,
           requestId: 'req-5',
           exportId: 'req-5',
           metadata: expect.objectContaining({
@@ -783,6 +784,88 @@ describe('DataExportService', () => {
       expect(status.progress.retryCount).toBe(3);
       expect(status.progress.lastFailureReason).toBe('memory limit exceeded');
       expect(status.progress.completedAt).toBeNull();
+    });
+  });
+
+  // ── Issue #789: download token expiry ────────────────────────────────────
+
+  describe('validateAndConsumeToken — token lifecycle (issue #789)', () => {
+    const requestId = 'req-token-test';
+    const userId = 'user-token-test';
+    const validToken = 'abc123';
+
+    it('returns true and invalidates a fresh, unconsumed token within TTL', async () => {
+      mockExportRepository.findOne.mockResolvedValueOnce({
+        downloadToken: validToken,
+        downloadedAt: null,
+        createdAt: new Date(), // just now — within 24 h TTL
+        status: 'READY',
+      } as Partial<ExportRequest>);
+      mockExportRepository.update.mockResolvedValueOnce({ affected: 1 });
+
+      const result = await service.validateAndConsumeToken(requestId, userId, validToken);
+
+      expect(result).toBe(true);
+      expect(mockExportRepository.update).toHaveBeenCalledWith(
+        requestId,
+        expect.objectContaining({ downloadToken: null }),
+      );
+    });
+
+    it('returns false when token does not match', async () => {
+      mockExportRepository.findOne.mockResolvedValueOnce({
+        downloadToken: 'different-token',
+        downloadedAt: null,
+        createdAt: new Date(),
+        status: 'READY',
+      } as Partial<ExportRequest>);
+
+      const result = await service.validateAndConsumeToken(requestId, userId, validToken);
+
+      expect(result).toBe(false);
+      expect(mockExportRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('returns false when token was already consumed (downloadedAt is set)', async () => {
+      mockExportRepository.findOne.mockResolvedValueOnce({
+        downloadToken: validToken,
+        downloadedAt: new Date('2026-01-01T00:00:00Z'), // already used
+        createdAt: new Date(),
+        status: 'READY',
+      } as Partial<ExportRequest>);
+
+      const result = await service.validateAndConsumeToken(requestId, userId, validToken);
+
+      expect(result).toBe(false);
+      expect(mockExportRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('returns false and marks token expired when retention window has elapsed', async () => {
+      const expiredCreatedAt = new Date(Date.now() - 25 * 60 * 60 * 1000); // 25 h ago
+      mockExportRepository.findOne.mockResolvedValueOnce({
+        downloadToken: validToken,
+        downloadedAt: null,
+        createdAt: expiredCreatedAt,
+        status: 'READY',
+      } as Partial<ExportRequest>);
+      mockExportRepository.update.mockResolvedValueOnce({ affected: 1 });
+
+      const result = await service.validateAndConsumeToken(requestId, userId, validToken);
+
+      expect(result).toBe(false);
+      // The token must be cleared and expiredAt stamped so the record reflects terminal state.
+      expect(mockExportRepository.update).toHaveBeenCalledWith(
+        requestId,
+        expect.objectContaining({ downloadToken: null }),
+      );
+    });
+
+    it('returns false when record not found', async () => {
+      mockExportRepository.findOne.mockResolvedValueOnce(null);
+
+      const result = await service.validateAndConsumeToken(requestId, userId, 'any-token');
+
+      expect(result).toBe(false);
     });
   });
 });

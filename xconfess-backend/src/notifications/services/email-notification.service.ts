@@ -8,7 +8,7 @@ import {
   NotificationType,
 } from '../entities/notification.entity';
 import { NotificationPreference } from '../entities/notification-preference.entity';
-import { NotificationJobData } from '../notification.queue';
+import { NotificationJobData } from '../processors/notification.processor';
 
 @Injectable()
 export class EmailNotificationService {

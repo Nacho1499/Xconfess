@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { AnalyticsData } from "@/app/lib/types/analytics.types";
 import { TrendingConfessionCard } from "./TrendingConfessionCard";
 import { ReactionChart } from "./ReactionChart";
 import { ActivityChart } from "./ActivityChart";
 import { MetricsOverview } from "./MetricsOverview";
+import { AnalyticsLoadingSkeleton } from "./LoadingState";
 import { TrendingUp, Calendar } from "lucide-react";
 
 export const TrendingDashboard = () => {
@@ -14,11 +15,7 @@ export const TrendingDashboard = () => {
   const [period, setPeriod] = useState<'7days' | '30days'>('7days');
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchAnalytics();
-  }, [period]);
-
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -33,17 +30,14 @@ export const TrendingDashboard = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [period]);
+
+  useEffect(() => {
+    fetchAnalytics();
+  }, [fetchAnalytics]);
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500 mx-auto mb-4" />
-          <p className="text-gray-400">Loading analytics...</p>
-        </div>
-      </div>
-    );
+    return <AnalyticsLoadingSkeleton />;
   }
 
   if (error) {

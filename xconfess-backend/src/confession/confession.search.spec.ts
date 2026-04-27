@@ -129,6 +129,29 @@ describe('ConfessionService - Search Functionality', () => {
 
       expect(repository.hybridSearch).toHaveBeenCalledWith('love', 1, 10);
     });
+
+    it('should pass anonymousOnly filter to repository', async () => {
+      const searchDto: SearchConfessionDto = {
+        q: 'secret',
+        page: 1,
+        limit: 10,
+        anonymousOnly: true,
+      };
+      const mockResult = { confessions: [], total: 0 };
+
+      jest
+        .spyOn(repository, 'hybridSearch')
+        .mockResolvedValue(mockResult as any);
+
+      await service.search(searchDto);
+
+      expect(repository.hybridSearch).toHaveBeenCalledWith(
+        'secret',
+        1,
+        10,
+        searchDto,
+      );
+    });
   });
 
   describe('fullTextSearch', () => {
@@ -188,6 +211,29 @@ describe('ConfessionService - Search Functionality', () => {
       const result = await service.fullTextSearch(searchDto);
       expect(result.data).toEqual([]);
       expect(result.meta.total).toBe(0);
+    });
+
+    it('should pass anonymousOnly filter to fullTextSearch repository method', async () => {
+      const searchDto: SearchConfessionDto = {
+        q: 'test',
+        page: 1,
+        limit: 10,
+        anonymousOnly: true,
+      };
+      const mockResult = { confessions: [], total: 0 };
+
+      jest
+        .spyOn(repository, 'fullTextSearch')
+        .mockResolvedValue(mockResult as any);
+
+      await service.fullTextSearch(searchDto);
+
+      expect(repository.fullTextSearch).toHaveBeenCalledWith(
+        'test',
+        1,
+        10,
+        searchDto,
+      );
     });
   });
 
@@ -356,4 +402,3 @@ describe('ConfessionService - Search Functionality', () => {
     });
   });
 });
-

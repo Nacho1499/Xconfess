@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bull';
+import { InjectQueue } from '@nestjs/bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
 import {
@@ -7,12 +7,10 @@ import {
   NotificationType,
 } from '../entities/notification.entity';
 import { NotificationPreference } from '../entities/notification-preference.entity';
-import { NOTIFICATION_QUEUE } from '../notification.queue';
-import {
-  CreateNotificationDto,
-  NotificationQueryDto,
-} from '../dto/notification.dto';
-import { Queue } from 'bull';
+import { NOTIFICATION_QUEUE } from '../processors/notification.processor';
+import { CreateNotificationDto, NotificationQueryDto } from '../dto/notification.dto';
+import { Queue } from 'bullmq';
+import { AppLogger } from '../../logger/logger.service';
 
 @Injectable()
 export class NotificationService {
@@ -23,7 +21,29 @@ export class NotificationService {
     private preferenceRepository: Repository<NotificationPreference>,
     @InjectQueue(NOTIFICATION_QUEUE)
     private notificationQueue: Queue,
+    private readonly appLogger: AppLogger,
   ) {}
+
+  async enqueueNotification(
+    type: string,
+    payload: any,
+    jobId?: string,
+  ): Promise<void> {
+    await this.notificationQueue.add(
+      'send-notification',
+      {
+        ...payload,
+        type,
+      },
+      { jobId },
+    );
+
+    this.appLogger.incrementCounter('notification_queue_enqueued_total', 1, {
+      queue: NOTIFICATION_QUEUE,
+      jobName: 'send-notification',
+      notificationType: type,
+    });
+  }
 
   async createNotification(
     dto: CreateNotificationDto,
@@ -48,9 +68,19 @@ export class NotificationService {
       preference.enableEmailNotifications &&
       this.shouldSendEmail(preference, dto.type)
     ) {
-      await this.notificationQueue.add('send-email', {
-        notificationId: notification.id,
-        userId: dto.userId,
+      await this.notificationQueue.add(
+        'send-notification',
+        {
+          notificationId: notification.id,
+          userId: dto.userId,
+        },
+        { jobId: `email-${notification.id}` },
+      );
+
+      this.appLogger.incrementCounter('notification_queue_enqueued_total', 1, {
+        queue: NOTIFICATION_QUEUE,
+        jobName: 'send-notification',
+        notificationType: dto.type,
       });
     }
 

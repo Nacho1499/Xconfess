@@ -4,7 +4,7 @@ import { AdminController } from './admin.controller';
 import { AdminService } from './services/admin.service';
 import { ModerationService } from './services/moderation.service';
 import { Report } from './entities/report.entity';
-import { AuditLog } from './entities/audit-log.entity';
+import { AuditLog } from '../audit-log/audit-log.entity';
 import { ModerationNoteTemplate } from '../comment/entities/moderation-note-template.entity';
 import { ModerationTemplateService } from '../comment/moderation-template.service';
 import { AnonymousConfession } from '../confession/entities/confession.entity';
@@ -17,6 +17,7 @@ import { UserAnonymousUser } from '../user/entities/user-anonymous-link.entity';
 import { WebSocketLogger } from '../websocket/websocket.logger';
 import { WsRolesGuard } from '../auth/guards/ws-roles.guard';
 import { Reflector } from '@nestjs/core';
+import { Tip } from '../tipping/entities/tip.entity';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { Reflector } from '@nestjs/core';
       AnonymousConfession,
       User,
       UserAnonymousUser,
+      Tip,
     ]),
     AuthModule,
     UserModule,
@@ -45,4 +47,3 @@ import { Reflector } from '@nestjs/core';
   exports: [AdminService, ModerationService, ModerationTemplateService],
 })
 export class AdminModule {}
-

@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApi, User } from '@/app/lib/api/admin';
+import { queryKeys } from '@/app/lib/api/queryKeys';
+import { useAdminConfirmation } from '@/app/components/admin/useAdminConfirmation';
 
 export default function UserManagement() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -11,9 +13,10 @@ export default function UserManagement() {
   const limit = 20;
 
   const queryClient = useQueryClient();
+  const { openConfirmation, confirmDialog } = useAdminConfirmation();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-users-search', searchQuery, page],
+    queryKey: queryKeys.admin.users.search(searchQuery, page),
     queryFn: () => adminApi.searchUsers(searchQuery, limit, (page - 1) * limit),
     enabled: searchQuery.length > 0,
   });
@@ -22,7 +25,7 @@ export default function UserManagement() {
     mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
       adminApi.banUser(id, reason),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users-search'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.users.all() });
       setSelectedUser(null);
     },
   });
@@ -30,24 +33,44 @@ export default function UserManagement() {
   const unbanMutation = useMutation({
     mutationFn: (id: string) => adminApi.unbanUser(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users-search'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.users.all() });
       setSelectedUser(null);
     },
   });
 
   const handleBan = (user: User) => {
-    const reason = prompt('Enter ban reason (optional):');
-    if (reason !== null) {
-      if (confirm(`Are you sure you want to ban user ${user.username}?`)) {
-        banMutation.mutate({ id: user.id.toString(), reason: reason || undefined });
-      }
-    }
+    openConfirmation({
+      title: `Ban ${user.username}?`,
+      description: 'This will block the user from signing in and using the platform.',
+      confirmLabel: 'Ban User',
+      variant: 'danger',
+      action: () => banMutation.mutateAsync({ id: user.id.toString() }),
+      successMessage: 'User banned.',
+      successOptions: {
+        action: {
+          label: 'Undo',
+          onClick: () => unbanMutation.mutate(user.id.toString()),
+        },
+      },
+      errorMessage: 'Failed to ban user.',
+    });
   };
 
   const handleUnban = (user: User) => {
-    if (confirm(`Are you sure you want to unban user ${user.username}?`)) {
-      unbanMutation.mutate(user.id.toString());
-    }
+    openConfirmation({
+      title: `Unban ${user.username}?`,
+      description: 'This will restore the user account.',
+      confirmLabel: 'Unban User',
+      action: () => unbanMutation.mutateAsync(user.id.toString()),
+      successMessage: 'User unbanned.',
+      successOptions: {
+        action: {
+          label: 'Undo',
+          onClick: () => banMutation.mutate({ id: user.id.toString() }),
+        },
+      },
+      errorMessage: 'Failed to unban user.',
+    });
   };
 
   const users = data?.users || [];
@@ -56,6 +79,8 @@ export default function UserManagement() {
 
   return (
     <div className="space-y-4">
+      {confirmDialog}
+
       {/* Search */}
       <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-4">
         <div className="flex gap-4">
@@ -209,7 +234,7 @@ export default function UserManagement() {
 
 function UserHistory({ userId }: { userId: string }) {
   const { data, isLoading } = useQuery({
-    queryKey: ['admin-user-history', userId],
+    queryKey: queryKeys.admin.users.history(userId),
     queryFn: () => adminApi.getUserHistory(userId),
   });
 

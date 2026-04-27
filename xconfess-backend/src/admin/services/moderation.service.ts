@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { AuditLog, AuditAction } from '../entities/audit-log.entity';
+import { EntityManager, Repository } from 'typeorm';
+import { AuditLog, AuditActionType } from '../../audit-log/audit-log.entity';
 import { Request } from 'express';
 
 @Injectable()
@@ -15,32 +15,45 @@ export class ModerationService {
 
   async logAction(
     adminId: number,
-    action: AuditAction,
+    action: AuditActionType,
     entityType: string | null,
     entityId: string | null,
     metadata: Record<string, any> | null,
     notes: string | null,
     request?: Request,
+    manager?: EntityManager,
   ): Promise<AuditLog> {
-    const auditLog = this.auditLogRepository.create({
+    const requestId = (request as any)?.requestId || null;
+
+    const repo = manager
+      ? manager.getRepository(AuditLog)
+      : this.auditLogRepository;
+
+    const auditLog = repo.create({
       adminId,
       action,
       entityType,
       entityId,
-      metadata,
+      metadata: {
+        ...(metadata || {}),
+        ...(entityType ? { entityType } : {}),
+        ...(entityId ? { entityId } : {}),
+        ...(requestId ? { requestId } : {}),
+      },
       notes,
       ipAddress: request?.ip || request?.socket?.remoteAddress || null,
       userAgent: request?.headers['user-agent'] || null,
+      requestId,
     });
 
-    const saved = await this.auditLogRepository.save(auditLog);
+    const saved = await repo.save(auditLog);
     this.logger.log(`Audit log created: ${action} by admin ${adminId}`);
     return saved;
   }
 
   async getAuditLogs(
     adminId?: number,
-    action?: AuditAction,
+    action?: AuditActionType,
     entityType?: string,
     entityId?: string,
     limit = 100,

@@ -1,10 +1,10 @@
 import axios, { AxiosError, AxiosResponse } from "axios";
-import { logError, getErrorMessage } from "@/app/lib/utils/errorHandler";
-import { AUTH_TOKEN_KEY, REFRESH_TOKEN_KEY } from "./constants";
+import { logError } from "@/app/lib/utils/errorHandler";
 import { useAuthStore } from "@/app/lib/store/authStore";
+import { getApiBaseUrl } from "@/app/lib/config";
 
 const apiClient = axios.create({
-	baseURL: process.env.NEXT_PUBLIC_API_URL,
+	baseURL: getApiBaseUrl(),
 	headers: { "Content-Type": "application/json" },
 	timeout: 30000,
 });
@@ -37,6 +37,13 @@ declare module "axios" {
 }
 
 const MAX_RETRIES = 3;
+const DEV_BYPASS_AUTH_ENABLED =
+	process.env.NODE_ENV === "development" &&
+	process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === "true";
+
+function shouldSuppressExpectedDevOfflineError(error: AxiosError): boolean {
+	return DEV_BYPASS_AUTH_ENABLED && !error.response;
+}
 
 // Response interceptor for error handling and retries
 apiClient.interceptors.response.use(
@@ -87,18 +94,26 @@ apiClient.interceptors.response.use(
 					? "API Client - Server Error"
 					: "API Client - Request Failed";
 
-		logError(
-			error,
-			config.__retryCount > 0
-				? `${context} (after ${config.__retryCount} retries)`
-				: context,
-			{
+		if (shouldSuppressExpectedDevOfflineError(error)) {
+			console.debug("Skipping expected local API error while backend is offline.", {
 				url: config.url,
-				status: error.response?.status,
 				retries: config.__retryCount,
 				correlationId: config.correlationId,
-			},
-		);
+			});
+		} else {
+			logError(
+				error,
+				config.__retryCount > 0
+					? `${context} (after ${config.__retryCount} retries)`
+					: context,
+				{
+					url: config.url,
+					status: error.response?.status,
+					retries: config.__retryCount,
+					correlationId: config.correlationId,
+				},
+			);
+		}
 
 		return Promise.reject(error);
 	},

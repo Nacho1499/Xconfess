@@ -3,8 +3,11 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi, Report } from "@/app/lib/api/admin";
+import { queryKeys } from "@/app/lib/api/queryKeys";
 import ReportDetail from "./ReportDetail";
-import { exportToCSV } from "@/app/lib/utils/csvExport";
+import { useExportCSV } from "@/app/lib/hooks/useExportCSV";
+import { ExportCsvButton } from "@/app/components/admin/ExportCsvButton";
+import { useAdminConfirmation } from "@/app/components/admin/useAdminConfirmation";
 
 export default function ReportList() {
   const [selectedReport, setSelectedReport] = useState<string | null>(null);
@@ -16,16 +19,19 @@ export default function ReportList() {
   const limit = 20;
 
   const queryClient = useQueryClient();
+  const { triggerExport, isExporting: isExportingCsv } = useExportCSV({ label: 'reports' });
+  const { openConfirmation, confirmDialog } = useAdminConfirmation();
+
+  const reportListKey = queryKeys.admin.reports.list({
+    statusFilter,
+    typeFilter,
+    startDate,
+    endDate,
+    page,
+  });
 
   const { data, isLoading } = useQuery({
-    queryKey: [
-      "admin-reports",
-      statusFilter,
-      typeFilter,
-      startDate,
-      endDate,
-      page,
-    ],
+    queryKey: reportListKey,
     queryFn: () =>
       adminApi.getReports({
         status: statusFilter !== "all" ? statusFilter : undefined,
@@ -37,82 +43,13 @@ export default function ReportList() {
       }),
   });
 
-  const resolveMutation = useMutation({
-    mutationFn: ({ id, notes }: { id: string; notes?: string }) =>
-      adminApi.resolveReport(id, notes),
-    onMutate: async ({ id }) => {
-      await queryClient.cancelQueries({ queryKey: ["admin-reports"] });
-      const previousData = queryClient.getQueryData(["admin-reports"]);
-      queryClient.setQueriesData(
-        { queryKey: ["admin-reports"] },
-        (old: any) => {
-          if (!old?.reports) return old;
-          return {
-            ...old,
-            reports: old.reports.map((r: Report) =>
-              r.id === id ? { ...r, status: "resolved" } : r,
-            ),
-          };
-        },
-      );
-      return { previousData };
-    },
-    onError: (err, newReport, context) => {
-      if (context?.previousData) {
-        queryClient.setQueriesData(
-          { queryKey: ["admin-reports"] },
-          context.previousData,
-        );
-      }
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-reports"] });
-      setSelectedReport(null);
-    },
-  });
-
-  const dismissMutation = useMutation({
-    mutationFn: ({ id, notes }: { id: string; notes?: string }) =>
-      adminApi.dismissReport(id, notes),
-    onMutate: async ({ id }) => {
-      await queryClient.cancelQueries({ queryKey: ["admin-reports"] });
-      const previousData = queryClient.getQueryData(["admin-reports"]);
-      queryClient.setQueriesData(
-        { queryKey: ["admin-reports"] },
-        (old: any) => {
-          if (!old?.reports) return old;
-          return {
-            ...old,
-            reports: old.reports.map((r: Report) =>
-              r.id === id ? { ...r, status: "dismissed" } : r,
-            ),
-          };
-        },
-      );
-      return { previousData };
-    },
-    onError: (err, newReport, context) => {
-      if (context?.previousData) {
-        queryClient.setQueriesData(
-          { queryKey: ["admin-reports"] },
-          context.previousData,
-        );
-      }
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-reports"] });
-      setSelectedReport(null);
-    },
-  });
-
   const bulkResolveMutation = useMutation({
-    mutationFn: ({ ids, notes }: { ids: string[]; notes?: string }) =>
-      adminApi.bulkResolveReports(ids, notes),
+    mutationFn: ({ ids }: { ids: string[] }) => adminApi.bulkResolveReports(ids),
     onMutate: async ({ ids }) => {
-      await queryClient.cancelQueries({ queryKey: ["admin-reports"] });
-      const previousData = queryClient.getQueryData(["admin-reports"]);
+      await queryClient.cancelQueries({ queryKey: queryKeys.admin.reports.all() });
+      const snapshots = queryClient.getQueriesData({ queryKey: queryKeys.admin.reports.all() });
       queryClient.setQueriesData(
-        { queryKey: ["admin-reports"] },
+        { queryKey: queryKeys.admin.reports.all() },
         (old: any) => {
           if (!old?.reports) return old;
           return {
@@ -123,18 +60,15 @@ export default function ReportList() {
           };
         },
       );
-      return { previousData };
+      return { snapshots };
     },
-    onError: (err, variables, context) => {
-      if (context?.previousData) {
-        queryClient.setQueriesData(
-          { queryKey: ["admin-reports"] },
-          context.previousData,
-        );
-      }
+    onError: (_err, _vars, context) => {
+      context?.snapshots?.forEach(([key, data]) => {
+        queryClient.setQueryData(key, data);
+      });
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-reports"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.reports.all() });
     },
   });
 
@@ -152,10 +86,18 @@ export default function ReportList() {
 
   const handleBulkResolve = () => {
     if (selectedIds.size === 0) return;
-    if (confirm(`Resolve ${selectedIds.size} selected reports?`)) {
-      bulkResolveMutation.mutate({ ids: Array.from(selectedIds) });
-      setSelectedIds(new Set());
-    }
+    const reportIds = Array.from(selectedIds);
+    openConfirmation({
+      title: 'Resolve selected reports?',
+      description: `This will mark ${reportIds.length} selected reports as resolved.`,
+      confirmLabel: 'Resolve',
+      action: () => bulkResolveMutation.mutateAsync({ ids: reportIds }),
+      successMessage: 'Selected reports resolved.',
+      errorMessage: 'Failed to resolve selected reports.',
+      onSuccess: () => {
+        setSelectedIds(new Set());
+      },
+    });
   };
 
   if (isLoading) {
@@ -175,12 +117,7 @@ export default function ReportList() {
         <ReportDetail
           report={report}
           onBack={() => setSelectedReport(null)}
-          onResolve={(notes) =>
-            resolveMutation.mutate({ id: report.id, notes })
-          }
-          onDismiss={(notes) =>
-            dismissMutation.mutate({ id: report.id, notes })
-          }
+          onActionSuccess={() => setSelectedReport(null)}
         />
       );
     }
@@ -188,6 +125,8 @@ export default function ReportList() {
 
   return (
     <div className="space-y-4">
+      {confirmDialog}
+
       {/* Filters */}
       <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-4">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-5">
@@ -262,9 +201,9 @@ export default function ReportList() {
             />
           </div>
           <div className="flex items-end gap-2">
-            <button
+            <ExportCsvButton
               onClick={() => {
-                const exportData = reports.map((r: Report) => ({
+                const exportData: Record<string, unknown>[] = reports.map((r: Report) => ({
                   id: r.id,
                   type: r.type,
                   status: r.status,
@@ -275,15 +214,14 @@ export default function ReportList() {
                     ? new Date(r.resolvedAt).toLocaleString()
                     : "",
                 }));
-                exportToCSV(
+                triggerExport(
                   exportData,
                   `reports-${new Date().toISOString().split("T")[0]}.csv`,
                 );
               }}
-              className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 text-sm"
-            >
-              Export CSV
-            </button>
+              isExporting={isExportingCsv}
+              label="Export Reports CSV"
+            />
             {selectedIds.size > 0 && (
               <button
                 onClick={handleBulkResolve}

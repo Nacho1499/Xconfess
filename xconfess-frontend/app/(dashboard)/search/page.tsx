@@ -116,6 +116,7 @@ export default function SearchPage() {
     hasMore,
     page,
     isLoading,
+    isRetrying,
     error,
     statusMeta,
     loadMore,
@@ -146,7 +147,7 @@ export default function SearchPage() {
   const updateUrl = useCallback((q: string, f: SearchFilters) => {
     const params = filtersToSearchParams(f, q);
     const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
-    router.replace(newUrl, { scroll: false });
+    router.push(newUrl, { scroll: false });
   }, [pathname, router]);
 
   const handleSubmit = useCallback((q: string) => {
@@ -238,7 +239,7 @@ export default function SearchPage() {
 
   return (
     <div className="min-h-screen bg-zinc-950">
-      <div className="container mx-auto py-6 px-4 lg:py-8 lg:px-6">
+      <div className="container mx-auto py-6 px-4 sm:px-6 md:px-8 lg:py-8 lg:px-10">
         <header className="mb-6 lg:mb-8">
           <h1 className="text-2xl font-bold text-white mb-2">
             Search confessions
@@ -262,7 +263,7 @@ export default function SearchPage() {
             type="button"
             onClick={() => setSidebarOpen((o) => !o)}
             className={cn(
-              "inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border bg-zinc-900 text-zinc-200 border-zinc-700 hover:bg-zinc-800 hover:border-zinc-600 transition-colors lg:hidden",
+              "inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl border bg-zinc-900 text-zinc-200 border-zinc-700 hover:bg-zinc-800 hover:border-zinc-600 transition-colors lg:hidden min-h-[44px]",
               sidebarOpen && "bg-zinc-800 border-zinc-600"
             )}
             aria-expanded={sidebarOpen}
@@ -324,7 +325,7 @@ export default function SearchPage() {
               <div className="mb-6">
                 <ErrorState
                   title="Search request failed"
-                  description="We could not reach search right now."
+                  description="We couldn’t complete search. You can retry or adjust filters."
                   error={error ?? "Search failed"}
                   onRetry={retry}
                   variant="error"
@@ -355,6 +356,7 @@ export default function SearchPage() {
                   results={results}
                   query={debouncedQuery.trim() || undefined}
                   isLoading={isLoading}
+                  isRetrying={isRetrying}
                   isEmpty={isEmpty}
                   hasSearched={hasSearched}
                   page={page}

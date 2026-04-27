@@ -1,7 +1,11 @@
+use soroban_sdk::Env;
+
+use xconfess_contract::{XConfessContract, XConfessContractClient};
+
 #[test]
 fn test_confession_pagination_full_walk() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, XConfessContract);
+    let contract_id = env.register(XConfessContract, ());
     let client = XConfessContractClient::new(&env, &contract_id);
 
     for i in 0..15 {

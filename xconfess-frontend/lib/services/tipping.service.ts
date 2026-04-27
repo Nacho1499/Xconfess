@@ -13,24 +13,35 @@ import {
   BASE_FEE,
 } from "@stellar/stellar-sdk";
 import { ActivityStatus } from "@/app/lib/types/activity";
+import {
+  isFreighterInstalled,
+  freighterGetPublicKey,
+  freighterSignTransaction,
+} from "../wallet/freighterAdapter";
 
 const MIN_TIP_AMOUNT = 0.1;
-const SIGN_TIMEOUT_MS = 45000;
-
-declare global {
-  interface Window {
-    freighterApi?: any;
-  }
-}
 
 // -------------------- Types --------------------
 
 export type NetworkKind = "testnet" | "mainnet" | "unknown";
+export type TipStatus = "pending" | "confirmed" | "failed" | "stale_pending";
 
 export interface TipStats {
   totalAmount: number;
   totalCount: number;
   averageAmount: number;
+}
+
+export interface VerifyTipParams {
+  confessionId: string;
+  signedXdr: string;
+}
+
+export interface TipVerificationResult {
+  tipId: string;
+  status: TipStatus;
+  confirmedAt?: string;
+  failureReason?: string;
 }
 
 export interface Tip {
@@ -80,9 +91,7 @@ function sleep(ms: number): Promise<void> {
 /**
  * Fake status checker — replace with actual backend or Stellar SDK call
  */
-export const checkTransactionStatus = async (
-  txHash: string
-): Promise<ActivityStatus> => {
+export const checkTransactionStatus = async (): Promise<ActivityStatus> => {
   await sleep(2000);
 
   const random = Math.random();
@@ -93,12 +102,8 @@ export const checkTransactionStatus = async (
 
 // -------------------- Wallet Helpers --------------------
 
-/**
- * Check if Freighter wallet is available
- */
 export async function isFreighterAvailable(): Promise<boolean> {
-  if (typeof window === "undefined") return false;
-  return !!window.freighterApi;
+  return isFreighterInstalled();
 }
 
 // -------------------- Send Tip --------------------
@@ -113,10 +118,17 @@ export async function sendTip(
       return { success: false, error: `Minimum tip amount is ${MIN_TIP_AMOUNT} XLM` };
     }
 
-    const freighter = window.freighterApi;
-    if (!freighter) return { success: false, error: "Freighter wallet not found" };
+    if (!isFreighterInstalled()) {
+      return { success: false, error: "Freighter wallet not found" };
+    }
 
-    const publicKey = await freighter.getPublicKey();
+    let publicKey: string;
+    try {
+      publicKey = await freighterGetPublicKey();
+    } catch {
+      return { success: false, error: "Freighter wallet not found" };
+    }
+
     const network = getStellarNetwork();
     const server = getStellarServer();
 
@@ -132,7 +144,7 @@ export async function sendTip(
       .setTimeout(30)
       .build();
 
-    const signedXDR = await freighter.signTransaction(transaction.toXDR(), { network });
+    const signedXDR = await freighterSignTransaction(transaction.toXDR(), network);
     const tx = TransactionBuilder.fromXDR(signedXDR, network);
     const result = await server.submitTransaction(tx);
 
@@ -177,4 +189,35 @@ export async function getTipStats(confessionId: string): Promise<TipStats | null
   } catch {
     return null;
   }
+}
+
+// -------------------- Backend Integration --------------------
+
+export async function verifyTip(
+  params: VerifyTipParams,
+): Promise<TipVerificationResult> {
+  const response = await fetch("/api/tips/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(
+      body?.message ?? `Tip verification failed (${response.status})`,
+    );
+  }
+
+  return response.json() as Promise<TipVerificationResult>;
+}
+
+export async function fetchTipStatus(
+  tipId: string,
+): Promise<TipVerificationResult> {
+  const response = await fetch(`/api/tips/${tipId}/status`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch tip status (${response.status})`);
+  }
+  return response.json() as Promise<TipVerificationResult>;
 }
