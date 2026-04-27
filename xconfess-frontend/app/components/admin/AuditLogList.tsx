@@ -1,22 +1,28 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { adminApi, AuditLog } from '@/app/lib/api/admin';
-import { queryKeys } from '@/app/lib/api/queryKeys';
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { adminApi, AuditLog } from "@/app/lib/api/admin";
+import { useExportCSV } from "@/app/lib/hooks/useExportCSV";
+import { queryKeys } from "@/app/lib/api/queryKeys";
 
 export default function AuditLogList() {
-  const [actionFilter, setActionFilter] = useState<string>('all');
-  const [entityTypeFilter, setEntityTypeFilter] = useState<string>('all');
+  const { triggerExport } = useExportCSV({ label: 'audit logs' });
+  const [actionFilter, setActionFilter] = useState<string>("all");
+  const [entityTypeFilter, setEntityTypeFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const limit = 50;
 
   const { data, isLoading } = useQuery({
-    queryKey: queryKeys.admin.auditLogs.list({ actionFilter, entityTypeFilter, page }),
+    queryKey: queryKeys.admin.auditLogs.list({
+      actionFilter,
+      entityTypeFilter,
+      page,
+    }),
     queryFn: () =>
       adminApi.getAuditLogs({
-        action: actionFilter !== 'all' ? actionFilter : undefined,
-        entityType: entityTypeFilter !== 'all' ? entityTypeFilter : undefined,
+        action: actionFilter !== "all" ? actionFilter : undefined,
+        entityType: entityTypeFilter !== "all" ? entityTypeFilter : undefined,
         limit,
         offset: (page - 1) * limit,
       }),
@@ -27,14 +33,18 @@ export default function AuditLogList() {
   const totalPages = Math.ceil(total / limit);
 
   if (isLoading) {
-    return <div className="text-center py-8 text-gray-500">Loading audit logs...</div>;
+    return (
+      <div className="text-center py-8 text-gray-500">
+        Loading audit logs...
+      </div>
+    );
   }
 
   return (
     <div className="space-y-4">
       {/* Filters */}
       <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               Action
@@ -76,6 +86,25 @@ export default function AuditLogList() {
             </select>
           </div>
         </div>
+        <button
+          onClick={() => {
+            const exportData = logs.map((log: AuditLog) => ({
+              admin: log.admin?.username || `User ${log.adminId}`,
+              action: log.action,
+              entityType: log.entityType || "",
+              entityId: log.entityId || "",
+              notes: log.notes || "",
+              createdAt: new Date(log.createdAt).toLocaleString(),
+            }));
+            triggerExport(
+              exportData,
+              `audit-logs-${new Date().toISOString().split("T")[0]}.csv`,
+            );
+          }}
+          className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 text-sm"
+        >
+          Export CSV
+        </button>
       </div>
 
       {/* Audit Logs Table */}
@@ -102,20 +131,23 @@ export default function AuditLogList() {
           </thead>
           <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
             {logs.map((log: AuditLog) => (
-              <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+              <tr
+                key={log.id}
+                className="hover:bg-gray-50 dark:hover:bg-gray-700"
+              >
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                   {log.admin?.username || `User ${log.adminId}`}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                  {log.action.replace(/_/g, ' ')}
+                  {log.action.replace(/_/g, " ")}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                   {log.entityType && log.entityId
                     ? `${log.entityType} #${log.entityId.substring(0, 8)}`
-                    : '-'}
+                    : "-"}
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400 max-w-xs truncate">
-                  {log.notes || '-'}
+                  {log.notes || "-"}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                   {new Date(log.createdAt).toLocaleString()}
@@ -130,7 +162,8 @@ export default function AuditLogList() {
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <div className="text-sm text-gray-700 dark:text-gray-300">
-            Showing {(page - 1) * limit + 1} to {Math.min(page * limit, total)} of {total} results
+            Showing {(page - 1) * limit + 1} to {Math.min(page * limit, total)}{" "}
+            of {total} results
           </div>
           <div className="flex gap-2">
             <button
