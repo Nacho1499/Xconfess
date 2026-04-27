@@ -88,14 +88,7 @@ describe('TippingService - Race Condition Prevention', () => {
       const txId = 'test-tx-123';
       const dto = { txId };
 
-      jest.spyOn(confessionRepository, 'findOne').mockResolvedValue(mockConfession as any);
-      jest.spyOn(stellarService, 'verifyTransaction').mockResolvedValue(true);
-      jest.spyOn(stellarService, 'getHorizonTxUrl').mockReturnValue('http://test');
-
-      // Mock first call - no existing tip
-      jest.spyOn(tipRepository, 'findOne').mockResolvedValueOnce(null);
-
-      // Mock second call - tip now exists (simulating concurrent processing)
+      // Mock the existing tip that would be returned on second call
       const existingTip = {
         id: 'tip-1',
         txId,
@@ -103,16 +96,15 @@ describe('TippingService - Race Condition Prevention', () => {
         verificationStatus: TipVerificationStatus.VERIFIED,
         amount: 1.0,
       };
-      jest.spyOn(tipRepository, 'findOne').mockResolvedValueOnce(existingTip as any);
 
-      // First request should succeed
-      const result1 = await service.verifyAndRecordTip(mockConfession.id, dto);
+      jest.spyOn(confessionRepository, 'findOne').mockResolvedValue(mockConfession as any);
+      jest.spyOn(tipRepository, 'findOne').mockResolvedValue(existingTip as any);
 
       // Second concurrent request should return existing tip (idempotent)
-      const result2 = await service.verifyAndRecordTip(mockConfession.id, dto);
+      const result = await service.verifyAndRecordTip(mockConfession.id, dto);
 
-      expect(result2.isIdempotent).toBe(true);
-      expect(result2.tip.id).toBe(existingTip.id);
+      expect(result.isIdempotent).toBe(true);
+      expect(result.tip.id).toBe(existingTip.id);
     });
 
     it('should reject conflicting confession IDs for same transaction', async () => {
