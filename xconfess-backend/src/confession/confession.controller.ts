@@ -102,7 +102,7 @@ export class ConfessionController {
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   async search(@Query() dto: SearchConfessionDto, @Req() req: any) {
     const result = await this.service.search(dto);
-    if (req.user) {
+    if (req.user && req.user.id) {
       await this.searchDiscoveryService.recordSearch(req.user.id, dto);
     }
     return result;
@@ -114,7 +114,7 @@ export class ConfessionController {
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   async fullTextSearch(@Query() dto: SearchConfessionDto, @Req() req: any) {
     const result = await this.service.fullTextSearch(dto);
-    if (req.user) {
+    if (req.user && req.user.id) {
       await this.searchDiscoveryService.recordSearch(req.user.id, dto);
     }
     return result;
