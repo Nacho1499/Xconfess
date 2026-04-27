@@ -153,3 +153,35 @@ If any item is missing, pause and gather it first.
 ## Related Maintenance Work
 - `maintainer/issues/170-fix-backend-tip-verification-idempotency-replay.md`
 - `maintainer/issues/173-feat-backend-chain-reconciliation-worker.md`
+
+## Metrics & Observability (Reconciliation Lag)
+
+As per Issue #783, the backend emits bounded metrics to track the age of pending records. This allows operators to differentiate between "normal network delay" and "stuck records."
+
+### 1. Metric: `reconciliation_lag`
+- **Fields:**
+    - `type`: `anchor` | `tip`
+    - `confessionId`: UUID of the confession (for DB cross-referencing).
+    - `txHash`: Truncated Stellar hash (for blockchain audit).
+    - `lagSeconds`: Integer count of seconds since record creation.
+    - `isStale`: Boolean (true if > 300s).
+
+### 2. Operational Thresholds
+| Lag Time | Status | Operator Response |
+| :--- | :--- | :--- |
+| < 60s | **Healthy** | None (Standard Stellar consensus). |
+| 60s - 300s | **Warning** | Monitor for network-wide congestion. |
+| > 300s | **Critical** | Record is **Stale**. Follow "Stuck Pending Records" playbook. |
+
+### 3. Log Example (JSON)
+```json
+{
+  "level": "info",
+  "metric": "reconciliation_lag",
+  "type": "anchor",
+  "confessionId": "conf_882",
+  "txHash": "GC7A...234",
+  "lagSeconds": 450,
+  "isStale": true,
+  "message": "[METRIC] anchor reconciliation lag: 450s"
+}
