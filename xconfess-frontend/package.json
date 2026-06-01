@@ -50,13 +50,6 @@
     "zod": "^4.3.5",
     "zustand": "^5.0.10"
   },
-<<<<<<< HEAD
-=======
-  "optionalDependencies": {
-    "@next/swc-win32-x64-msvc": "^16.2.1",
-    "lightningcss-win32-x64-msvc": "^1.30.2"
-  },
->>>>>>> 7532a4f1f0d202b7718dcc2d60a9fb40a0f4be4e
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
