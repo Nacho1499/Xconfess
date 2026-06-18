@@ -62,6 +62,10 @@ export enum AuditActionType {
 
   /** Privileged Stellar server-signed contract invocation */
   STELLAR_CONTRACT_INVOCATION = 'stellar_contract_invocation',
+
+  // Stellar Anchor Retry Logic
+  STELLAR_ANCHOR_RETRY = 'stellar_anchor_retry',
+  STELLAR_ANCHOR_FAILED = 'stellar_anchor_failed',
 }
 
 @Entity('audit_logs')
