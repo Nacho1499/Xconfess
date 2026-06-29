@@ -144,7 +144,7 @@ export class AnonymousConfession {
   status: string; // 'draft', 'scheduled', 'published'
 
   @Column({ name: 'publish_at', type: 'timestamp', nullable: true })
-  publishAt: Date;
+  publishAt: Date | null;
 
   get content(): string {
     return this.message;
