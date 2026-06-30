@@ -23,6 +23,7 @@ interface SearchInputProps {
   placeholder?: string;
   className?: string;
   "aria-label"?: string;
+  onFocus?: () => void; // Added to satisfy parent page orchestration requirements
 }
 
 function buildSuggestions(
@@ -56,6 +57,7 @@ export function SearchInput({
   placeholder = "Search confessions...",
   className,
   "aria-label": ariaLabel = "Search confessions",
+  onFocus, // Destructured safely
 }: SearchInputProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -164,52 +166,55 @@ export function SearchInput({
   return (
     <div ref={containerRef} className={cn("relative", className)}>
       <form onSubmit={handleSubmit}>
-      <div className="relative flex items-center">
-        <Search
-          className="absolute left-3 h-4 w-4 text-zinc-500 pointer-events-none"
-          aria-hidden
-        />
-        <Input
-          ref={inputRef}
-          type="search"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onFocus={() => setIsOpen(true)}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          aria-label={ariaLabel}
-          aria-autocomplete="list"
-          aria-controls="search-suggestions"
-          aria-expanded={showDropdown}
-          aria-activedescendant={showDropdown ? `suggestion-${selectedIndex}` : undefined}
-          role="combobox"
-          autoComplete="off"
-          data-search-input
-          className="pl-10 pr-10 rounded-xl border-zinc-700 bg-zinc-900 text-white placeholder:text-zinc-500"
-        />
-        {value.length > 0 && (
-          <button
-            type="button"
-            onClick={() => {
-              onChange("");
-              inputRef.current?.focus();
+        <div className="relative flex items-center">
+          <Search
+            className="absolute left-3 h-4 w-4 text-zinc-500 pointer-events-none"
+            aria-hidden
+          />
+          <Input
+            ref={inputRef}
+            type="search"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            onFocus={() => {
+              setIsOpen(true);
+              if (onFocus) onFocus(); // Safely bubble focus transitions up to parent overlay layouts
             }}
-            className="absolute right-3 p-1 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
-            aria-label="Clear search"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        )}
-      </div>
-      <SearchSuggestions
-        items={items}
-        isOpen={showDropdown}
-        selectedIndex={selectedIndex}
-        onSelect={handleSelect}
-        onClearHistory={clear}
-        hasRecentSection={hasRecent}
-        className="left-0 right-0"
-      />
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            aria-label={ariaLabel}
+            aria-autocomplete="list"
+            aria-controls="search-suggestions"
+            aria-expanded={showDropdown}
+            aria-activedescendant={showDropdown ? `suggestion-${selectedIndex}` : undefined}
+            role="combobox"
+            autoComplete="off"
+            data-search-input
+            className="pl-10 pr-10 rounded-xl border-zinc-700 bg-zinc-900 text-white placeholder:text-zinc-500"
+          />
+          {value.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                onChange("");
+                inputRef.current?.focus();
+              }}
+              className="absolute right-3 p-1 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+              aria-label="Clear search"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+        <SearchSuggestions
+          items={items}
+          isOpen={showDropdown}
+          selectedIndex={selectedIndex}
+          onSelect={handleSelect}
+          onClearHistory={clear}
+          hasRecentSection={hasRecent}
+          className="left-0 right-0"
+        />
       </form>
     </div>
   );

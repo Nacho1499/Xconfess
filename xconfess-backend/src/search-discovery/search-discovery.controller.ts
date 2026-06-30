@@ -7,15 +7,16 @@ import {
   Param,
   UseGuards,
   Req,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
-  ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { SearchDiscoveryService } from './search-discovery.service';
 import { CreateSavedSearchDto } from './dto/create-saved-search.dto';
+import { SearchConfessionDto } from '../confession/dto/search-confession.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @ApiTags('Search Discovery')
@@ -24,6 +25,15 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 @Controller('confessions/search/discovery')
 export class SearchDiscoveryController {
   constructor(private readonly service: SearchDiscoveryService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Execute full text search with filters and highlighting' })
+  executeSearch(
+    @Req() req: any,
+    @Query() query: SearchConfessionDto,
+  ) {
+    return this.service.executeFullTextSearch(req.user.id, query);
+  }
 
   @Post('presets')
   @ApiOperation({ summary: 'Save a search preset' })
