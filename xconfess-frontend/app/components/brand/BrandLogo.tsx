@@ -43,7 +43,7 @@ export function BrandLogo({
       src={src}
       width={size.width}
       height={size.height}
-      alt="xConfess"
+      alt={href ? "" : "xConfess"}
       decoding="async"
       fetchPriority={priority ? "high" : undefined}
       className={cn(
