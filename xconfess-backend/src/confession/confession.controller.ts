@@ -41,6 +41,7 @@ import { UpdateConfessionDto } from './dto/update-confession.dto';
 import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 import { SearchDiscoveryService } from '../search-discovery/search-discovery.service';
 import { SparseFieldsetsInterceptor } from '../common/interceptors/sparse-fieldsets.interceptor';
+import { QueryTimeoutInterceptor } from '../common/query-timeout.interceptor';
 import { ConfessionSchedulerService } from './confession-scheduler.service';
 import { ConfessionIdempotencyService } from './confession-idempotency.service';
 
@@ -126,6 +127,7 @@ export class ConfessionController {
   async create(
     @Body() dto: CreateConfessionDto,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Headers('x-stellar-wallet') walletAddress: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ) {
     if (idempotencyKey && this.idempotencyService) {
@@ -145,7 +147,9 @@ export class ConfessionController {
 
       if (!check.isReplay) {
         try {
-          const confession = await this.service.create(dto);
+          const confession = walletAddress
+            ? await this.service.create(dto, undefined, walletAddress)
+            : await this.service.create(dto);
           await this.idempotencyService.commitSuccess(
             check.record,
             confession as any,
@@ -160,10 +164,13 @@ export class ConfessionController {
       }
     }
 
-    return this.service.create(dto);
+    return walletAddress
+      ? this.service.create(dto, undefined, walletAddress)
+      : this.service.create(dto);
   }
 
   @Get()
+  @UseInterceptors(QueryTimeoutInterceptor)
   @ApiOperation({ summary: 'Get paginated confessions list' })
   @ApiResponse({
     status: 200,
@@ -179,8 +186,9 @@ export class ConfessionController {
             created_at: '2026-04-25T10:00:00.000Z',
           },
         ],
-        total: 1,
-        page: 1,
+        nextCursor: 'eyJpZCI6ImY0N2FjMTBiIiwib2Zmc2V0IjoyMH0=',
+        hasMore: true,
+        hasNextPage: true,
         limit: 20,
       },
     },
@@ -339,5 +347,42 @@ export class ConfessionController {
   @ApiResponse({ status: 404, description: 'Confession not found.' })
   getById(@Param('id') id: string, @Req() req: Request) {
     return this.service.getConfessionByIdWithViewCount(id, req);
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Soft-delete a confession (Issue #1929)',
+    description:
+      'Marks a confession as deleted. It will be removed from public feeds but kept in audit records.',
+  })
+  @ApiParam({ name: 'id', description: 'Confession UUID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Confession soft-deleted successfully.',
+  })
+  @ApiResponse({ status: 404, description: 'Confession not found.' })
+  deleteConfession(
+    @Param('id') id: string,
+    @Headers('x-anonymous-user-id') userId: string,
+  ) {
+    if (!userId) {
+      throw new BadRequestException('User ID is required for deletion');
+    }
+    return this.service.deleteConfession(id, userId);
+  }
+
+  @Patch(':id/restore')
+  @ApiOperation({
+    summary: 'Restore a soft-deleted confession (Issue #1929)',
+    description: 'Restores a confession that was previously soft-deleted.',
+  })
+  @ApiParam({ name: 'id', description: 'Confession UUID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Confession restored successfully.',
+  })
+  @ApiResponse({ status: 404, description: 'Confession not found.' })
+  restoreConfession(@Param('id') id: string) {
+    return this.service.restoreConfession(id);
   }
 }

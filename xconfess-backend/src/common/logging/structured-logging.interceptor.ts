@@ -16,7 +16,7 @@ import { redactLogPayload } from './log-redaction';
  *   – route, status, requestId, user scope, subsystem, and error class
  *     are always present.
  */
-interface StructuredRequestLog {
+interface StructuredRequestLog extends Record<string, unknown> {
   /** HTTP method (GET, POST, …) */
   method: string;
   /** Route path (e.g. /api/confessions) */
@@ -37,8 +37,6 @@ interface StructuredRequestLog {
   timestamp: string;
   /** Error class when status >= 500, omitted otherwise */
   errorClass?: string;
-  /** Error message when status >= 500, omitted otherwise */
-  errorMessage?: string;
   /** IP address of the caller */
   ip: string;
 }
@@ -53,7 +51,14 @@ export class StructuredLoggingInterceptor implements NestInterceptor {
     const start = Date.now();
 
     const method = req.method;
-    const route = req.url;
+    // Prefer the matched route template; it avoids logging identifiers and
+    // never includes query-string credentials or message text. Before routing,
+    // req.path is the safe pathname-only fallback.
+    const matchedPath = (req as Request & { route?: { path?: unknown } }).route?.path;
+    const route =
+      typeof matchedPath === 'string'
+        ? `${req.baseUrl ?? ''}${matchedPath}`
+        : req.path || new URL(req.url, 'http://localhost').pathname;
     const requestId =
       (req as any).requestId ?? res.getHeader('x-request-id') ?? 'unknown';
 
@@ -79,10 +84,8 @@ export class StructuredLoggingInterceptor implements NestInterceptor {
 
           if (err instanceof Error) {
             log.errorClass = err.constructor.name;
-            log.errorMessage = err.message;
           } else {
             log.errorClass = 'UnknownError';
-            log.errorMessage = String(err);
           }
 
           this.logger.error(JSON.stringify(redactLogPayload(log)));

@@ -6,6 +6,7 @@ import {
   Logger,
   forwardRef,
   HttpStatus,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -27,6 +28,7 @@ import { decryptConfession } from '../utils/confession-encryption';
 import { ConfigService } from '@nestjs/config';
 import { AppException } from '../common/errors/app-exception';
 import { ErrorCode } from '../common/errors/error-codes';
+import { AnalyticsEventService } from '../analytics/analytics-event.service';
 
 @Injectable()
 export class UserService {
@@ -38,6 +40,8 @@ export class UserService {
     @Inject(forwardRef(() => EmailService))
     private emailService: EmailService,
     private readonly configService: ConfigService,
+    @Optional()
+    private readonly analyticsEventService?: AnalyticsEventService,
   ) {}
 
   // =========================
@@ -129,6 +133,21 @@ export class UserService {
       });
 
       const savedUser = await this.userRepository.save(user);
+
+      this.analyticsEventService
+        ?.record({
+          eventName: 'user_registered',
+          actorId: `user:${savedUser.id}`,
+          idempotencyKey: `user_registered:${savedUser.id}`,
+          metadata: { requestId: requestId ?? null, source: 'user_service' },
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `Failed to record registration analytics${trace}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
 
       try {
         await this.emailService.sendWelcomeEmail(
@@ -493,6 +512,24 @@ export class UserService {
           totalPages: Math.ceil(Number(totalRow?.total ?? 0) / safeLimit),
         },
       },
+    };
+  }
+
+  async getDashboardStats(userId: number) {
+    const summary = await this.getProfileSummary(userId, 1, 1);
+    const latestConfession = summary.history?.data?.[0]?.message;
+
+    return {
+      totalConfessions: Number(summary.stats?.confessions ?? 0),
+      totalReactions: Number(summary.stats?.reactions ?? 0),
+      mostPopularConfession:
+        typeof latestConfession === 'string' && latestConfession.length > 0
+          ? latestConfession
+          : 'No confessions yet',
+      badges: Array.isArray(summary.badges)
+        ? summary.badges.map((badge: any) => badge.name ?? badge.id ?? String(badge))
+        : [],
+      streak: 0,
     };
   }
 
